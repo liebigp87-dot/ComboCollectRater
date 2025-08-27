@@ -179,7 +179,41 @@ class GoogleSheetsExporter:
         except Exception as e:
             st.error(f"Error deleting video: {str(e)}")
     
-    def add_to_tobe_links(self, spreadsheet_id: str, video_data: Dict, analysis_data: Dict):
+    def add_to_discarded(self, spreadsheet_id: str, video_url: str):
+        """Add video URL to discarded table"""
+        try:
+            spreadsheet = self.get_spreadsheet_by_id(spreadsheet_id)
+            
+            try:
+                worksheet = spreadsheet.worksheet("discarded")
+            except gspread.exceptions.WorksheetNotFound:
+                worksheet = spreadsheet.add_worksheet(title="discarded", rows=1000, cols=1)
+                worksheet.append_row(['url'])  # Header
+            
+            # Add just the URL
+            worksheet.append_row([video_url])
+        except Exception as e:
+            st.error(f"Error adding to discarded: {str(e)}")
+    
+    def load_discarded_urls(self, spreadsheet_id: str) -> set:
+        """Load existing URLs from discarded sheet"""
+        try:
+            spreadsheet = self.get_spreadsheet_by_id(spreadsheet_id)
+            try:
+                worksheet = spreadsheet.worksheet("discarded")
+                all_values = worksheet.get_all_values()
+                
+                if len(all_values) > 1:
+                    # Skip header row, get URLs from first column
+                    discarded_urls = {row[0] for row in all_values[1:] if row and row[0]}
+                    return discarded_urls
+            except gspread.exceptions.WorksheetNotFound:
+                # Sheet doesn't exist yet, return empty set
+                pass
+            return set()
+        except Exception as e:
+            st.error(f"Error loading discarded URLs: {str(e)}")
+            return set()
         """Add video to tobe_links sheet with analysis data"""
         try:
             spreadsheet = self.get_spreadsheet_by_id(spreadsheet_id)
@@ -445,13 +479,27 @@ class YouTubeCollector:
             return False
     
     def validate_video(self, search_item: Dict, require_captions: bool = True) -> Tuple[bool, str]:
-        """Validate video against collection criteria"""
+        """Validate video against collection criteria including discarded check"""
         video_id = search_item['id']['videoId']
+        video_url = f"https://youtube.com/watch?v={video_id}"
         
         self.add_log(f"Checking video: {search_item['snippet']['title'][:50]}...")
         details = self.get_video_details(video_id)
         if not details:
             return False, "Could not fetch video details"
+        
+        # Duplicate check 1: Current session
+        existing_ids = [v['video_id'] for v in st.session_state.collected_videos]
+        if video_id in existing_ids:
+            return False, "Duplicate video (already in current session)"
+        
+        # Duplicate check 2: Already in raw_links
+        if video_id in self.existing_sheet_ids:
+            return False, "Duplicate video (already in raw_links)"
+        
+        # Duplicate check 3: Already processed (in discarded)
+        if video_url in self.discarded_urls:
+            return False, "Video already processed (found in discarded)"
         
         # Caption check
         if require_captions:
@@ -491,14 +539,6 @@ class YouTubeCollector:
         view_count = int(details['statistics'].get('viewCount', 0))
         if view_count < 10000:
             return False, f"View count too low ({view_count} < 10,000)"
-        
-        # Duplicate check
-        existing_ids = [v['video_id'] for v in st.session_state.collected_videos]
-        if video_id in existing_ids:
-            return False, "Duplicate video (already collected)"
-        
-        if video_id in self.existing_sheet_ids:
-            return False, "Duplicate video (already in sheet)"
         
         return True, details
     
@@ -1349,6 +1389,13 @@ def main():
                                             st.info("No timestamped moments found")
                                     
                                     # Process the video automatically
+                                    video_url = next_video.get('url', '')
+                                    
+                                    # Always add to discarded first (before deletion)
+                                    if video_url:
+                                        exporter.add_to_discarded(spreadsheet_id, video_url)
+                                    
+                                    # Then delete from raw_links
                                     exporter.delete_raw_video(spreadsheet_id, next_video['row_number'])
                                     
                                     # If score >= 7.5, add to tobe_links
@@ -1361,6 +1408,9 @@ def main():
                                         st.info(f"ℹ️ Score: {score:.1f}/10 - Below threshold, removed from raw_links.")
                                         rater.add_log(f"Video {next_video.get('title', '')[:50]} scored {score:.1f} - removed", "INFO")
                                     
+                                    # Log the discarded action
+                                    rater.add_log(f"Added URL to discarded: {video_url}", "INFO")
+                                    
                                     st.session_state.rater_stats['rated'] += 1
                                     
                                     # Brief pause before next video
@@ -1372,11 +1422,24 @@ def main():
                                 except Exception as e:
                                     st.error(f"Error analyzing video: {str(e)}")
                                     rater.add_log(f"Error analyzing video: {str(e)}", "ERROR")
-                                    # Still delete the problematic video to avoid infinite loop
+                                    
+                                    # Still add to discarded and delete to avoid infinite loop
+                                    video_url = next_video.get('url', '')
+                                    if video_url:
+                                        exporter.add_to_discarded(spreadsheet_id, video_url)
+                                        rater.add_log(f"Added failed video URL to discarded: {video_url}", "INFO")
+                                    
                                     exporter.delete_raw_video(spreadsheet_id, next_video['row_number'])
                                     time.sleep(1)
                             else:
                                 st.error("No video ID found")
+                                
+                                # Still add to discarded and delete to avoid reprocessing
+                                video_url = next_video.get('url', '')
+                                if video_url:
+                                    exporter.add_to_discarded(spreadsheet_id, video_url)
+                                    rater.add_log(f"Added video with missing ID to discarded: {video_url}", "INFO")
+                                
                                 exporter.delete_raw_video(spreadsheet_id, next_video['row_number'])
                         
                         # Small delay and rerun to continue the loop
