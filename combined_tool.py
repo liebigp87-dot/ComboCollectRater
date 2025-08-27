@@ -1,4 +1,41 @@
-"""
+if auto_export and sheets_creds and videos:
+                                try:
+                                    collector.add_log(f"Starting auto-export of {len(videos)} videos to Google Sheets", "INFO")
+                                    if not exporter:
+                                        exporter = GoogleSheetsExporter(sheets_creds)
+                                        collector.add_log("Initialized Google Sheets exporter", "INFO")
+                                    
+                                    collector.add_log(f"Attempting to export to spreadsheet ID: {spreadsheet_id}", "INFO")
+                                    sheet_url = exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
+                                    
+                                    if sheet_url:
+                                        st.success("Exported to Google Sheets!")
+                                        st.markdown(f"[Open Spreadsheet]({sheet_url})")
+                                        collector.add_log(f"✅ EXPORT SUCCESS: {len(videos)} videos exported to raw_links sheet", "SUCCESS")
+                                        collector.add_log(f"Spreadsheet URL: {sheet_url}", "INFO")
+                                    else:
+                                        collector.add_log("❌ EXPORT FAILED: No spreadsheet URL returned", "ERROR")
+                                        st.error("Export completed but no URL returned")
+                                        
+                                except Exception as e:
+                                    error_msg = str(e)
+                                    collector.add_log(f"❌ EXPORT ERROR: {error_msg}", "ERROR")
+                                    st.error(f"Export failed: {error_msg}")
+                                    
+                                    # Additional error details
+                                    if "authentication" in error_msg.lower():
+                                        collector.add_log("Check Google Sheets service account credentials", "ERROR")
+                                    elif "permission" in error_msg.lower():
+                                        collector.add_log("Check if service account has write access to spreadsheet", "ERROR")
+                                    elif "spreadsheet" in error_msg.lower():
+                                        collector.add_log("Check if spreadsheet ID is correct and accessible", "ERROR")
+                            else:
+                                if not auto_export:
+                                    collector.add_log("Auto-export disabled - videos collected but not exported", "INFO")
+                                elif not sheets_creds:
+                                    collector.add_log("No Google Sheets credentials - cannot export", "WARNING")
+                                elif not videos:
+                                    collector.add_log("No videos collected - nothing to export", "INFO")"""
 Combined YouTube Data Collector & Video Rating Tool
 Collects YouTube videos and rates them for content suitability
 """
@@ -119,157 +156,6 @@ if 'used_queries' not in st.session_state:
     st.session_state.used_queries = set()
 if 'analysis_history' not in st.session_state:
     st.session_state.analysis_history = []
-
-class GoogleDriveLogger:
-    """Handle Google Drive logging functionality"""
-    
-    def __init__(self, credentials_dict: Dict):
-        """Initialize with service account credentials for Drive access"""
-        try:
-            self.creds = Credentials.from_service_account_info(
-                credentials_dict,
-                scopes=['https://www.googleapis.com/auth/drive.file']
-            )
-            self.service = drive_build('drive', 'v3', credentials=self.creds)
-            self.log_files = {}  # Cache file IDs
-            self._ensure_log_files()
-        except Exception as e:
-            raise Exception(f"Failed to initialize Google Drive: {str(e)}")
-    
-    def _ensure_log_files(self):
-        """Ensure log files exist in Google Drive"""
-        log_files = ['data_collector.json', 'video_rater.json']
-        
-        for filename in log_files:
-            try:
-                # Search for existing file
-                results = self.service.files().list(
-                    q=f"name='{filename}' and trashed=false",
-                    fields="files(id, name)"
-                ).execute()
-                
-                files = results.get('files', [])
-                
-                if files:
-                    self.log_files[filename] = files[0]['id']
-                else:
-                    # Create new file with empty JSON array
-                    media = MediaIoBaseUpload(
-                        io.BytesIO(b'[]'),
-                        mimetype='application/json'
-                    )
-                    
-                    file_metadata = {'name': filename}
-                    
-                    file = self.service.files().create(
-                        body=file_metadata,
-                        media_body=media,
-                        fields='id'
-                    ).execute()
-                    
-                    self.log_files[filename] = file.get('id')
-                    
-            except Exception as e:
-                print(f"Error ensuring log file {filename}: {str(e)}")
-    
-    def log_message(self, filename: str, level: str, message: str, session_id: str = ""):
-        """Add log entry to specified file"""
-        try:
-            # Download current content
-            file_id = self.log_files.get(filename)
-            if not file_id:
-                st.error(f"Log file {filename} not found in Drive")
-                return
-            
-            request = self.service.files().get_media(fileId=file_id)
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            while done is False:
-                status, done = downloader.next_chunk()
-            
-            # Parse existing JSON
-            fh.seek(0)
-            try:
-                content = fh.getvalue().decode('utf-8')
-                logs = json.loads(content) if content.strip() else []
-            except json.JSONDecodeError:
-                logs = []
-            except Exception as e:
-                st.error(f"Error parsing log file content: {str(e)}")
-                logs = []
-            
-            # Add new entry
-            new_entry = {
-                'timestamp': datetime.now().isoformat(),
-                'level': level,
-                'message': message,
-                'session_id': session_id
-            }
-            logs.append(new_entry)
-            
-            # Upload updated content
-            media = MediaIoBaseUpload(
-                io.BytesIO(json.dumps(logs, indent=2).encode('utf-8')),
-                mimetype='application/json'
-            )
-            
-            self.service.files().update(
-                fileId=file_id,
-                media_body=media
-            ).execute()
-            
-        except Exception as e:
-            st.error(f"Error logging to {filename}: {str(e)}")
-            print(f"Drive logging error: {str(e)}")  # Also print for debugging
-    
-    def get_log_content(self, filename: str) -> str:
-        """Get log file content for viewing"""
-        try:
-            file_id = self.log_files.get(filename)
-            if not file_id:
-                return "Log file not found"
-            
-            request = self.service.files().get_media(fileId=file_id)
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            while done is False:
-                status, done = downloader.next_chunk()
-            
-            fh.seek(0)
-            try:
-                logs = json.loads(fh.getvalue().decode('utf-8'))
-                # Format for display
-                formatted = ""
-                for entry in logs[-50:]:  # Show last 50 entries
-                    formatted += f"[{entry['timestamp']}] {entry['level']}: {entry['message']}\n"
-                return formatted if formatted else "No log entries found"
-            except:
-                return "Error reading log file"
-                
-        except Exception as e:
-            return f"Error accessing log file: {str(e)}"
-    
-    def reset_log_file(self, filename: str):
-        """Reset log file to empty"""
-        try:
-            file_id = self.log_files.get(filename)
-            if not file_id:
-                return
-            
-            media = MediaIoBaseUpload(
-                io.BytesIO(b'[]'),
-                mimetype='application/json'
-            )
-            
-            self.service.files().update(
-                fileId=file_id,
-                media_body=media
-            ).execute()
-            
-        except Exception as e:
-            print(f"Error resetting log file {filename}: {str(e)}")
 
 CATEGORIES = {
     'heartwarming': {
@@ -600,24 +486,11 @@ class YouTubeCollector:
         ]
     
     def add_log(self, message: str, log_type: str = "INFO"):
-        """Add a log entry to session state and Google Drive if enabled"""
+        """Add a detailed log entry"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] COLLECTOR {log_type}: {message}"
         st.session_state.logs.insert(0, log_entry)
-        st.session_state.logs = st.session_state.logs[:50]
-        
-        # Also log to Google Drive if enabled
-        if st.session_state.logging_enabled and st.session_state.drive_logger:
-            try:
-                session_id = st.session_state.get('session_id', 'manual')
-                st.session_state.drive_logger.log_message(
-                    'data_collector.json', 
-                    log_type, 
-                    message, 
-                    session_id
-                )
-            except Exception as e:
-                print(f"Drive logging failed: {str(e)}")
+        st.session_state.logs = st.session_state.logs[:100]  # Keep more logs for debugging
     
     def check_quota_available(self) -> Tuple[bool, str]:
         """Check if YouTube API quota is available"""
@@ -730,69 +603,111 @@ class YouTubeCollector:
             return False
     
     def validate_video_for_category(self, search_item: Dict, target_category: str, require_captions: bool = True) -> Tuple[bool, str]:
-        """Validate video against collection criteria for specific category"""
+        """Validate video against collection criteria for specific category with detailed logging"""
         video_id = search_item['id']['videoId']
         video_url = f"https://youtube.com/watch?v={video_id}"
+        title = search_item['snippet']['title']
         
-        self.add_log(f"Checking video: {search_item['snippet']['title'][:50]}...")
+        self.add_log(f"Starting validation for: {title[:50]}...")
+        
+        # Step 1: Get video details
         details = self.get_video_details(video_id)
         if not details:
+            self.add_log(f"REJECTED: Could not fetch video details for {video_id}", "WARNING")
             return False, "Could not fetch video details"
         
-        # Duplicate check 1: Current session
+        self.add_log(f"✓ Video details fetched successfully", "INFO")
+        
+        # Step 2: Duplicate check - Current session
         existing_ids = [v['video_id'] for v in st.session_state.collected_videos]
         if video_id in existing_ids:
+            self.add_log(f"REJECTED: Video {video_id} already in current session", "WARNING")
             return False, "Duplicate video (already in current session)"
         
-        # Duplicate check 2: Already in raw_links
+        self.add_log(f"✓ Not duplicate in current session", "INFO")
+        
+        # Step 3: Duplicate check - Already in raw_links
         if video_id in self.existing_sheet_ids:
+            self.add_log(f"REJECTED: Video {video_id} already exists in raw_links sheet", "WARNING")
             return False, "Duplicate video (already in raw_links)"
         
-        # Duplicate check 3: Already processed (in discarded)
+        self.add_log(f"✓ Not duplicate in raw_links sheet", "INFO")
+        
+        # Step 4: Duplicate check - Already processed (in discarded)
         if video_url in self.discarded_urls:
+            self.add_log(f"REJECTED: Video URL already processed (found in discarded table)", "WARNING")
             return False, "Video already processed (found in discarded)"
         
-        # Caption check
+        self.add_log(f"✓ Not found in discarded table", "INFO")
+        
+        # Step 5: Caption check
         if require_captions:
-            if not self.check_caption_availability(details):
+            has_captions = self.check_caption_availability(details)
+            if not has_captions:
+                self.add_log(f"REJECTED: No captions available for video {video_id}", "WARNING")
                 return False, "No captions available"
+            self.add_log(f"✓ Captions available", "INFO")
         else:
             self.check_caption_availability(details)
+            self.add_log(f"✓ Caption check skipped (not required)", "INFO")
         
-        # Age check
+        # Step 6: Age check
         published_at = datetime.fromisoformat(details['snippet']['publishedAt'].replace('Z', '+00:00'))
         six_months_ago = datetime.now(published_at.tzinfo) - timedelta(days=180)
+        age_days = (datetime.now(published_at.tzinfo) - published_at).days
+        
         if published_at < six_months_ago:
+            self.add_log(f"REJECTED: Video too old ({age_days} days, limit: 180 days)", "WARNING")
             return False, "Video older than 6 months"
         
-        # YouTube Short check
+        self.add_log(f"✓ Age check passed ({age_days} days old)", "INFO")
+        
+        # Step 7: YouTube Short check
         if self.is_youtube_short(video_id, details):
+            self.add_log(f"REJECTED: Video detected as YouTube Short", "WARNING")
             return False, "YouTube Short detected"
         
+        self.add_log(f"✓ Not a YouTube Short", "INFO")
+        
+        # Step 8: Duration check
         duration = isodate.parse_duration(details['contentDetails']['duration'])
         duration_seconds = duration.total_seconds()
+        
         if duration_seconds < 90:
+            self.add_log(f"REJECTED: Video too short ({duration_seconds}s, minimum: 90s)", "WARNING")
             return False, f"Video too short ({duration_seconds}s < 90s)"
         
-        # Content type exclusion
-        title = details['snippet']['title'].lower()
+        self.add_log(f"✓ Duration check passed ({duration_seconds}s)", "INFO")
+        
+        # Step 9: Content type exclusion - Music
+        title_lower = details['snippet']['title'].lower()
         tags = [tag.lower() for tag in details['snippet'].get('tags', [])]
         
         for keyword in self.music_keywords:
-            if keyword in title or any(keyword in tag for tag in tags):
+            if keyword in title_lower or any(keyword in tag for tag in tags):
+                self.add_log(f"REJECTED: Music video detected (keyword: {keyword})", "WARNING")
                 return False, f"Music video detected (keyword: {keyword})"
         
+        self.add_log(f"✓ Music video check passed", "INFO")
+        
+        # Step 10: Content type exclusion - Compilation
         for keyword in self.compilation_keywords:
-            if keyword in title or any(keyword in tag for tag in tags):
+            if keyword in title_lower or any(keyword in tag for tag in tags):
+                self.add_log(f"REJECTED: Compilation video detected (keyword: {keyword})", "WARNING")
                 return False, f"Compilation detected (keyword: {keyword})"
         
-        # View count check
+        self.add_log(f"✓ Compilation check passed", "INFO")
+        
+        # Step 11: View count check
         view_count = int(details['statistics'].get('viewCount', 0))
         if view_count < 10000:
+            self.add_log(f"REJECTED: View count too low ({view_count:,}, minimum: 10,000)", "WARNING")
             return False, f"View count too low ({view_count} < 10,000)"
         
-        # Category relevance check - basic keyword matching
-        title_desc_text = (title + ' ' + details['snippet'].get('description', '')).lower()
+        self.add_log(f"✓ View count check passed ({view_count:,} views)", "INFO")
+        
+        # Step 12: Category relevance check
+        title_desc_text = (title_lower + ' ' + details['snippet'].get('description', '')).lower()
         
         category_keywords = {
             'heartwarming': ['heartwarming', 'touching', 'emotional', 'reunion', 'surprise', 'family', 'love', 
@@ -809,12 +724,15 @@ class YouTubeCollector:
         }
         
         keywords = category_keywords.get(target_category, [])
-        keyword_matches = sum(1 for kw in keywords if kw in title_desc_text)
+        matched_keywords = [kw for kw in keywords if kw in title_desc_text]
         
-        if keyword_matches == 0:
+        if not matched_keywords:
+            self.add_log(f"REJECTED: No {target_category} keywords found in title/description", "WARNING")
             return False, f"No {target_category} keywords found in title/description"
         
-        self.add_log(f"Video matches {target_category} category ({keyword_matches} keyword matches)", "INFO")
+        self.add_log(f"✓ Category check passed - matched keywords: {', '.join(matched_keywords[:3])}", "SUCCESS")
+        self.add_log(f"VALIDATION COMPLETE: Video {video_id} passed all checks!", "SUCCESS")
+        
         return True, details
     
     def collect_videos(self, target_count: int, category: str, spreadsheet_id: str = None, require_captions: bool = True, progress_callback=None):
@@ -899,7 +817,8 @@ class YouTubeCollector:
                     st.session_state.collector_stats['found'] += 1
                     videos_found_this_query += 1
                     
-                    self.add_log(f"Added: {video_record['title'][:50]}... (category: {current_category})", "SUCCESS")
+                    self.add_log(f"✅ ADDED TO COLLECTION: {video_record['title'][:50]}... (category: {current_category})", "SUCCESS")
+                    self.add_log(f"Collection stats - Found: {st.session_state.collector_stats['found']}, Target: {target_count}", "INFO")
                     
                     if progress_callback:
                         progress_callback(len(collected), target_count)
@@ -929,24 +848,11 @@ class VideoRater:
         self.youtube = build('youtube', 'v3', developerKey=api_key)
     
     def add_log(self, message: str, log_type: str = "INFO"):
-        """Add a log entry to session state and Google Drive if enabled"""
+        """Add a detailed log entry"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] RATER {log_type}: {message}"
         st.session_state.logs.insert(0, log_entry)
-        st.session_state.logs = st.session_state.logs[:50]
-        
-        # Also log to Google Drive if enabled
-        if st.session_state.logging_enabled and st.session_state.drive_logger:
-            try:
-                session_id = st.session_state.get('session_id', 'manual')
-                st.session_state.drive_logger.log_message(
-                    'video_rater.json', 
-                    log_type, 
-                    message, 
-                    session_id
-                )
-            except Exception as e:
-                print(f"Drive logging failed: {str(e)}")
+        st.session_state.logs = st.session_state.logs[:100]  # Keep more logs for debugging
     
     def check_quota_available(self) -> Tuple[bool, str]:
         """Check if YouTube API quota is available"""
@@ -1415,95 +1321,6 @@ def main():
         
         if sheets_creds and 'client_email' in sheets_creds:
             st.info(f"Service Account: {sheets_creds['client_email'][:30]}...")
-        
-        st.subheader("Logging Configuration")
-        
-        # Google Drive credentials for logging
-        drive_creds_method = st.radio(
-            "Google Drive Logging Credentials:",
-            ["Same as Sheets", "Separate Drive JSON"]
-        )
-        
-        drive_creds = None
-        if drive_creds_method == "Same as Sheets":
-            drive_creds = sheets_creds
-        else:
-            drive_creds_text = st.text_area(
-                "Google Drive Service Account JSON", 
-                help="Paste service account JSON with Drive access",
-                height=100
-            )
-            if drive_creds_text:
-                try:
-                    drive_creds = json.loads(drive_creds_text)
-                    st.success("Valid Drive JSON")
-                except json.JSONDecodeError as e:
-                    st.error(f"Invalid JSON: {str(e)}")
-        
-        # Logging enable/disable
-        if drive_creds:
-            logging_enabled = st.checkbox(
-                "Enable Google Drive Logging",
-                value=st.session_state.logging_enabled,
-                help="Log activities to Google Drive for persistence across sessions"
-            )
-            
-            if logging_enabled != st.session_state.logging_enabled:
-                st.session_state.logging_enabled = logging_enabled
-                
-                if logging_enabled:
-                    try:
-                        st.session_state.drive_logger = GoogleDriveLogger(drive_creds)
-                        st.success("Google Drive logging enabled")
-                    except Exception as e:
-                        st.error(f"Failed to enable logging: {str(e)}")
-                        st.session_state.logging_enabled = False
-                        st.session_state.drive_logger = None
-                else:
-                    st.session_state.drive_logger = None
-            
-            # Log management buttons (only if logging is enabled)
-            if st.session_state.logging_enabled and st.session_state.drive_logger:
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if st.button("View Collector Log"):
-                        try:
-                            log_content = st.session_state.drive_logger.get_log_content('data_collector.json')
-                            st.text_area("Data Collector Log", log_content, height=300, key="collector_log")
-                        except Exception as e:
-                            st.error(f"Error viewing collector log: {str(e)}")
-                
-                with col2:
-                    if st.button("View Rater Log"):
-                        try:
-                            log_content = st.session_state.drive_logger.get_log_content('video_rater.json')
-                            st.text_area("Video Rater Log", log_content, height=300, key="rater_log")
-                        except Exception as e:
-                            st.error(f"Error viewing rater log: {str(e)}")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if st.button("Reset Collector Log"):
-                        try:
-                            st.session_state.drive_logger.reset_log_file('data_collector.json')
-                            st.success("Data Collector log reset")
-                        except Exception as e:
-                            st.error(f"Error resetting collector log: {str(e)}")
-                
-                with col2:
-                    if st.button("Reset Rater Log"):
-                        try:
-                            st.session_state.drive_logger.reset_log_file('video_rater.json')
-                            st.success("Video Rater log reset")
-                        except Exception as e:
-                            st.error(f"Error resetting rater log: {str(e)}")
-        
-        else:
-            st.session_state.logging_enabled = False
-            st.session_state.drive_logger = None
-            st.info("Enter Google Drive credentials to enable logging")
     
     # Main content based on selected mode
     if mode == "Data Collector":
@@ -1603,12 +1420,39 @@ def main():
                                 try:
                                     if not exporter:
                                         exporter = GoogleSheetsExporter(sheets_creds)
+                                        collector.add_log("Initialized Google Sheets exporter", "INFO")
+                                    
+                                    collector.add_log(f"Attempting to export to spreadsheet ID: {spreadsheet_id}", "INFO")
                                     sheet_url = exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
+                                    
                                     if sheet_url:
                                         st.success("Exported to Google Sheets!")
                                         st.markdown(f"[Open Spreadsheet]({sheet_url})")
+                                        collector.add_log(f"✅ EXPORT SUCCESS: {len(videos)} videos exported to raw_links sheet", "SUCCESS")
+                                        collector.add_log(f"Spreadsheet URL: {sheet_url}", "INFO")
+                                    else:
+                                        collector.add_log("❌ EXPORT FAILED: No spreadsheet URL returned", "ERROR")
+                                        st.error("Export completed but no URL returned")
+                                        
                                 except Exception as e:
-                                    st.error(f"Export failed: {str(e)}")
+                                    error_msg = str(e)
+                                    collector.add_log(f"❌ EXPORT ERROR: {error_msg}", "ERROR")
+                                    st.error(f"Export failed: {error_msg}")
+                                    
+                                    # Additional error details
+                                    if "authentication" in error_msg.lower():
+                                        collector.add_log("Check Google Sheets service account credentials", "ERROR")
+                                    elif "permission" in error_msg.lower():
+                                        collector.add_log("Check if service account has write access to spreadsheet", "ERROR")
+                                    elif "spreadsheet" in error_msg.lower():
+                                        collector.add_log("Check if spreadsheet ID is correct and accessible", "ERROR")
+                            else:
+                                if not auto_export:
+                                    collector.add_log("Auto-export disabled - videos collected but not exported", "INFO")
+                                elif not sheets_creds:
+                                    collector.add_log("No Google Sheets credentials - cannot export", "WARNING")
+                                elif not videos:
+                                    collector.add_log("No videos collected - nothing to export", "INFO")
                     
                     except Exception as e:
                         st.error(f"Collection error: {str(e)}")
