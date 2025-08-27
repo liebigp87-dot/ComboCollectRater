@@ -779,7 +779,6 @@ class VideoRater:
             'total_fetched': len(comments)
         }
     
-    @st.cache_data(ttl=300)
     def fetch_video_data(self, video_id):
         """Fetch complete video data including comments"""
         try:
@@ -1384,4 +1383,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main() '
