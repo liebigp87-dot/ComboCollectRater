@@ -76,14 +76,6 @@ except ImportError:
     st.error("Please install isodate: pip install isodate")
     st.stop()
 
-try:
-    from googleapiclient.discovery import build as drive_build
-    from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
-    import io
-except ImportError:
-    st.error("Please install google-api-python-client for Drive access")
-    st.stop()
-
 # Page config
 st.set_page_config(
     page_title="YouTube Collection & Rating Tool",
@@ -1698,4 +1690,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()
