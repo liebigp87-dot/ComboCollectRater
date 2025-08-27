@@ -179,6 +179,52 @@ class GoogleSheetsExporter:
         except Exception as e:
             st.error(f"Error deleting video: {str(e)}")
     
+    def add_to_tobe_links(self, spreadsheet_id: str, video_data: Dict, analysis_data: Dict):
+        """Add video to tobe_links sheet with analysis data"""
+        try:
+            spreadsheet = self.get_spreadsheet_by_id(spreadsheet_id)
+            
+            try:
+                worksheet = spreadsheet.worksheet("tobe_links")
+            except gspread.exceptions.WorksheetNotFound:
+                worksheet = spreadsheet.add_worksheet(title="tobe_links", rows=1000, cols=25)
+                
+                # Create headers combining raw_links + analysis data
+                headers = [
+                    'video_id', 'title', 'url', 'category', 'search_query', 
+                    'duration_seconds', 'view_count', 'like_count', 'comment_count',
+                    'published_at', 'channel_title', 'tags', 'collected_at',
+                    'score', 'confidence', 'timestamped_moments', 'category_validation',
+                    'analysis_timestamp'
+                ]
+                worksheet.append_row(headers)
+            
+            # Prepare row data
+            row_data = [
+                video_data.get('video_id', ''),
+                video_data.get('title', ''),
+                video_data.get('url', ''),
+                video_data.get('category', ''),
+                video_data.get('search_query', ''),
+                video_data.get('duration_seconds', ''),
+                video_data.get('view_count', ''),
+                video_data.get('like_count', ''),
+                video_data.get('comment_count', ''),
+                video_data.get('published_at', ''),
+                video_data.get('channel_title', ''),
+                video_data.get('tags', ''),
+                video_data.get('collected_at', ''),
+                analysis_data.get('final_score', ''),
+                analysis_data.get('confidence', ''),
+                len(analysis_data.get('comments_analysis', {}).get('timestamped_moments', [])),
+                analysis_data.get('comments_analysis', {}).get('category_validation', ''),
+                datetime.now().isoformat()
+            ]
+            
+            worksheet.append_row(row_data)
+        except Exception as e:
+            st.error(f"Error adding to tobe_links: {str(e)}")
+    
     def add_to_discarded(self, spreadsheet_id: str, video_url: str):
         """Add video URL to discarded table"""
         try:
