@@ -123,8 +123,8 @@ if 'target_mode_enabled' not in st.session_state:
     st.session_state.target_mode_enabled = False
 if 'target_videos' not in st.session_state:
     st.session_state.target_videos = 10
-if 'target_progress' not in st.session_state:
-    st.session_state.target_progress = 0
+if 'auto_mode_error_count' not in st.session_state:
+    st.session_state.auto_mode_error_count = 0
 
 def show_status_alert():
     """Display system status alerts prominently"""
@@ -863,63 +863,92 @@ class YouTubeCollector:
             attempts += 1
             time.sleep(1.5)
         
-    def check_auto_mode(self, api_key: str, sheets_exporter=None, spreadsheet_id: str = None):
-        """Check if it's time for auto mode collection and execute if needed"""
-        current_time = time.time()
-        
-        # Check if an hour has passed since last check
-        if st.session_state.auto_mode_enabled and st.session_state.auto_mode_running:
-            # If this is the first run or an hour has passed
+    def check_auto_mode_safe(self, api_key: str, sheets_exporter=None, spreadsheet_id: str = None):
+        """Safely check and execute auto mode without blocking UI"""
+        try:
+            current_time = time.time()
+            
+            # Check if an hour has passed since last check or this is first run
             if (st.session_state.auto_mode_stats['last_check'] == 0 or 
                 current_time - st.session_state.auto_mode_stats['last_check'] >= 3600):
                 
-                # Update check time
+                # Update check time first
                 st.session_state.auto_mode_stats['last_check'] = current_time
                 st.session_state.auto_mode_stats['next_check'] = current_time + 3600
                 
-                # Check quota
-                quota_available, quota_message = self.check_quota_available()
+                self.add_log("AUTO MODE: Checking quota availability", "INFO")
+                
+                # Quick quota check with timeout protection
+                try:
+                    quota_available, quota_message = self.check_quota_available()
+                except Exception as e:
+                    self.add_log(f"AUTO MODE: Quota check failed - {str(e)}", "ERROR")
+                    raise Exception(f"Quota check failed: {str(e)}")
                 
                 if quota_available:
-                    # Start collection
-                    set_status('info', f"AUTO MODE: Starting collection #{st.session_state.auto_mode_stats['collections_completed'] + 1}")
+                    self.add_log("AUTO MODE: Quota available, starting collection", "INFO")
                     
-                    try:
-                        videos = self.collect_videos(
-                            target_count=10,
-                            category='mixed',
-                            spreadsheet_id=spreadsheet_id,
-                            require_captions=True,
-                            progress_callback=None
-                        )
-                        
-                        if videos and sheets_exporter:
-                            # Export to sheets
-                            sheet_url = sheets_exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
-                            if sheet_url:
-                                st.session_state.auto_mode_stats['collections_completed'] += 1
-                                self.add_log(f"AUTO MODE: Collection #{st.session_state.auto_mode_stats['collections_completed']} completed - {len(videos)} videos", "SUCCESS")
-                                
-                                # Check quota again for immediate next run
+                    # Quick validation of requirements
+                    if not sheets_exporter:
+                        raise Exception("Google Sheets exporter not available")
+                    if not spreadsheet_id:
+                        raise Exception("Spreadsheet ID not configured")
+                    
+                    # Start collection with error handling
+                    videos = self.collect_videos(
+                        target_count=10,
+                        category='mixed',
+                        spreadsheet_id=spreadsheet_id,
+                        require_captions=True,
+                        progress_callback=None
+                    )
+                    
+                    if videos:
+                        # Export to sheets
+                        sheet_url = sheets_exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
+                        if sheet_url:
+                            st.session_state.auto_mode_stats['collections_completed'] += 1
+                            st.session_state.auto_mode_error_count = 0  # Reset error count on success
+                            self.add_log(f"AUTO MODE: Collection #{st.session_state.auto_mode_stats['collections_completed']} completed - {len(videos)} videos", "SUCCESS")
+                            
+                            # Check quota for immediate next run
+                            try:
                                 quota_still_available, _ = self.check_quota_available()
                                 if quota_still_available:
-                                    st.session_state.auto_mode_stats['last_check'] = 0  # Reset to trigger immediate next run
-                                    return True  # Continue auto mode
+                                    st.session_state.auto_mode_stats['last_check'] = 0  # Reset for immediate next run
+                                    set_status('info', f"AUTO MODE: Collection completed, checking for next run...")
+                                    return True
                                 else:
                                     set_status('info', f"AUTO MODE: Quota exhausted after {st.session_state.auto_mode_stats['collections_completed']} collections")
-                            else:
-                                raise Exception("Export failed - no URL returned")
+                                    return True
+                            except Exception as e:
+                                self.add_log(f"AUTO MODE: Post-collection quota check failed - {str(e)}", "WARNING")
+                                return True  # Continue anyway
                         else:
-                            self.add_log("AUTO MODE: No videos collected", "WARNING")
-                            
-                    except Exception as e:
-                        set_status('error', f"AUTO MODE PAUSED: Collection failed - {str(e)}")
-                        st.session_state.auto_mode_running = False
-                        return False
+                            raise Exception("Export failed - no URL returned")
+                    else:
+                        self.add_log("AUTO MODE: No videos collected this round", "WARNING")
+                        return True  # Continue auto mode
                 else:
-                    set_status('info', f"AUTO MODE: Waiting for quota refresh - completed {st.session_state.auto_mode_stats['collections_completed']} collections")
+                    set_status('info', f"AUTO MODE: Waiting for quota refresh - {st.session_state.auto_mode_stats['collections_completed']} collections completed")
+                    return True  # Continue waiting
+                    
+        except Exception as e:
+            # Increment error count
+            st.session_state.auto_mode_error_count += 1
+            error_msg = str(e)
+            
+            # If too many errors, stop auto mode
+            if st.session_state.auto_mode_error_count >= 3:
+                set_status('error', f"AUTO MODE DISABLED: Too many failures ({st.session_state.auto_mode_error_count}) - {error_msg}")
+                st.session_state.auto_mode_running = False
+                st.session_state.auto_mode_error_count = 0
+                return False
+            else:
+                set_status('warning', f"AUTO MODE WARNING: Error #{st.session_state.auto_mode_error_count}/3 - {error_msg}")
+                return True  # Continue but with warning
         
-        return st.session_state.auto_mode_running
+        return True
 
 
 class VideoRater:
@@ -1473,13 +1502,65 @@ def main():
                         set_status('warning', "AUTO MODE STOPPED: Process terminated by user")
                         st.rerun()
                 else:
-                    if st.button("▶️ Start Auto Mode", 
-                                disabled=not youtube_api_key or not sheets_creds or not spreadsheet_id,
-                                type="primary"):
-                        st.session_state.auto_mode_running = True
-                        st.session_state.auto_mode_stats = {'collections_completed': 0, 'last_check': 0, 'next_check': 0}
-                        set_status('info', "AUTO MODE STARTED: Monitoring quota and collecting automatically")
-                        st.rerun()
+                    # Auto mode controls with improved error handling
+                    col1, col2, col3 = st.columns([2, 2, 1])
+                    
+                    with col1:
+                        if st.button("▶️ Start Auto Mode", 
+                                    disabled=not youtube_api_key or not sheets_creds or not spreadsheet_id,
+                                    type="primary"):
+                            try:
+                                # Pre-flight checks before starting auto mode
+                                set_status('info', "AUTO MODE: Performing startup checks...")
+                                
+                                # Test API key
+                                test_collector = YouTubeCollector(youtube_api_key)
+                                quota_available, quota_message = test_collector.check_quota_available()
+                                
+                                if not quota_available:
+                                    set_status('error', f"AUTO MODE STARTUP FAILED: {quota_message}")
+                                    st.rerun()
+                                    return
+                                
+                                # Test Google Sheets connection
+                                test_exporter = GoogleSheetsExporter(sheets_creds)
+                                test_sheet = test_exporter.get_spreadsheet_by_id(spreadsheet_id)
+                                
+                                if not test_sheet:
+                                    set_status('error', "AUTO MODE STARTUP FAILED: Cannot access Google Sheets")
+                                    st.rerun()
+                                    return
+                                
+                                # All checks passed
+                                st.session_state.auto_mode_running = True
+                                st.session_state.auto_mode_stats = {'collections_completed': 0, 'last_check': 0, 'next_check': 0}
+                                st.session_state.auto_mode_error_count = 0
+                                set_status('info', "AUTO MODE STARTED: All checks passed, monitoring quota")
+                                
+                            except Exception as e:
+                                set_status('error', f"AUTO MODE STARTUP FAILED: {str(e)}")
+                                st.session_state.auto_mode_running = False
+                                st.session_state.auto_mode_error_count = 0
+                            
+                            st.rerun()
+                    
+                    with col2:
+                        if st.button("⏹️ Stop Auto Mode", type="secondary"):
+                            st.session_state.auto_mode_running = False
+                            st.session_state.auto_mode_error_count = 0
+                            set_status('warning', "AUTO MODE STOPPED: Process terminated by user")
+                            st.rerun()
+                    
+                    with col3:
+                        # Emergency reset button
+                        if st.button("🔄", help="Emergency Reset", type="secondary"):
+                            st.session_state.auto_mode_running = False
+                            st.session_state.auto_mode_enabled = False
+                            st.session_state.auto_mode_error_count = 0
+                            st.session_state.is_collecting = False
+                            clear_status()
+                            st.success("Emergency reset completed")
+                            st.rerun()
         
         # Statistics display
         col1, col2, col3 = st.columns(3)
@@ -1603,17 +1684,33 @@ def main():
                         st.session_state.is_collecting = False
                         st.rerun()
         
-        # Auto mode monitoring
-        if st.session_state.auto_mode_running and not st.session_state.is_collecting:
-            try:
-                exporter = GoogleSheetsExporter(sheets_creds) if sheets_creds else None
-                collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
-                
-                # Check if it's time for auto collection
-                if collector.check_auto_mode(youtube_api_key, exporter, spreadsheet_id):
+        # Auto mode monitoring - non-blocking with error handling
+        if (st.session_state.auto_mode_running and 
+            not st.session_state.is_collecting and 
+            st.session_state.auto_mode_enabled):
+            
+            # Only check if we have required components
+            if youtube_api_key and sheets_creds and spreadsheet_id:
+                try:
+                    exporter = GoogleSheetsExporter(sheets_creds)
+                    collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
+                    
+                    # Safe, non-blocking auto mode check
+                    continue_auto = collector.check_auto_mode_safe(youtube_api_key, exporter, spreadsheet_id)
+                    
+                    if not continue_auto:
+                        # Auto mode was stopped due to errors
+                        st.rerun()
+                        
+                except Exception as e:
+                    # Critical error - stop auto mode immediately
+                    set_status('error', f"AUTO MODE CRITICAL ERROR: {str(e)}")
+                    st.session_state.auto_mode_running = False
+                    st.session_state.auto_mode_error_count = 0
                     st.rerun()
-            except Exception as e:
-                set_status('error', f"AUTO MODE ERROR: {str(e)}")
+            else:
+                # Missing requirements - stop auto mode
+                set_status('error', "AUTO MODE STOPPED: Missing API key, credentials, or spreadsheet ID")
                 st.session_state.auto_mode_running = False
         
         with col2:
