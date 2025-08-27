@@ -1285,10 +1285,11 @@ def main():
                             st.info("No videos available for rating in raw_links sheet.")
                             st.session_state.is_rating = False
                         else:
-                            # Display video info
+                            # Display video info and use category from raw_links
+                            video_category = next_video.get('category', 'heartwarming')
                             st.markdown(f"### {next_video.get('title', 'Unknown Title')}")
                             st.markdown(f"**Channel:** {next_video.get('channel_title', 'Unknown')}")
-                            st.markdown(f"**Category:** {next_video.get('category', 'Unknown')}")
+                            st.markdown(f"**Category:** {video_category} {CATEGORIES.get(video_category, {}).get('emoji', '')}")
                             
                             col1, col2, col3 = st.columns(3)
                             with col1:
@@ -1298,12 +1299,12 @@ def main():
                             with col3:
                                 st.metric("Comments", f"{int(next_video.get('comment_count', 0)):,}")
                             
-                            # Analyze video
+                            # Analyze video using category from raw_links
                             with st.spinner("Analyzing video..."):
                                 video_id = next_video.get('video_id')
                                 if video_id:
                                     video_data = rater.fetch_video_data(video_id)
-                                    analysis = rater.calculate_category_score(video_data, next_video.get('category', 'heartwarming'))
+                                    analysis = rater.calculate_category_score(video_data, video_category)
                                     
                                     # Display score
                                     score = analysis['final_score']
