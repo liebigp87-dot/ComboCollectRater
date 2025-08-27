@@ -444,19 +444,19 @@ class YouTubeCollector:
             self.add_log(f"Error checking captions: {str(e)}", "WARNING")
             return False
     
-    def validate_video(self, search_item: Dict, require_captions: bool = True) -> Tuple[bool, str]:
-        """Validate video against collection criteria"""
+    def validate_video_for_categories(self, search_item: Dict, require_captions: bool = True) -> Tuple[bool, str, List[str]]:
+        """Validate video against all categories and return which ones match"""
         video_id = search_item['id']['videoId']
         
         self.add_log(f"Checking video: {search_item['snippet']['title'][:50]}...")
         details = self.get_video_details(video_id)
         if not details:
-            return False, "Could not fetch video details"
+            return False, "Could not fetch video details", []
         
         # Caption check
         if require_captions:
             if not self.check_caption_availability(details):
-                return False, "No captions available"
+                return False, "No captions available", []
         else:
             self.check_caption_availability(details)
         
@@ -464,16 +464,16 @@ class YouTubeCollector:
         published_at = datetime.fromisoformat(details['snippet']['publishedAt'].replace('Z', '+00:00'))
         six_months_ago = datetime.now(published_at.tzinfo) - timedelta(days=180)
         if published_at < six_months_ago:
-            return False, "Video older than 6 months"
+            return False, "Video older than 6 months", []
         
         # YouTube Short check
         if self.is_youtube_short(video_id, details):
-            return False, "YouTube Short detected"
+            return False, "YouTube Short detected", []
         
         duration = isodate.parse_duration(details['contentDetails']['duration'])
         duration_seconds = duration.total_seconds()
         if duration_seconds < 90:
-            return False, f"Video too short ({duration_seconds}s < 90s)"
+            return False, f"Video too short ({duration_seconds}s < 90s)", []
         
         # Content type exclusion
         title = details['snippet']['title'].lower()
@@ -481,37 +481,61 @@ class YouTubeCollector:
         
         for keyword in self.music_keywords:
             if keyword in title or any(keyword in tag for tag in tags):
-                return False, f"Music video detected (keyword: {keyword})"
+                return False, f"Music video detected (keyword: {keyword})", []
         
         for keyword in self.compilation_keywords:
             if keyword in title or any(keyword in tag for tag in tags):
-                return False, f"Compilation detected (keyword: {keyword})"
+                return False, f"Compilation detected (keyword: {keyword})", []
         
         # View count check
         view_count = int(details['statistics'].get('viewCount', 0))
         if view_count < 10000:
-            return False, f"View count too low ({view_count} < 10,000)"
+            return False, f"View count too low ({view_count} < 10,000)", []
         
         # Duplicate check
         existing_ids = [v['video_id'] for v in st.session_state.collected_videos]
         if video_id in existing_ids:
-            return False, "Duplicate video (already collected)"
+            return False, "Duplicate video (already collected)", []
         
         if video_id in self.existing_sheet_ids:
-            return False, "Duplicate video (already in sheet)"
+            return False, "Duplicate video (already in sheet)", []
         
-        return True, details
+        # Check which categories this video matches
+        matching_categories = []
+        title_desc_text = (title + ' ' + details['snippet'].get('description', '')).lower()
+        
+        # Category keyword matching
+        category_keywords = {
+            'heartwarming': ['heartwarming', 'touching', 'emotional', 'reunion', 'surprise', 'family', 'love', 
+                           'soldier', 'homecoming', 'dog reunion', 'acts kindness', 'baby first time', 
+                           'proposal reaction', 'homeless helped', 'teacher surprised', 'saving animal'],
+            'funny': ['funny', 'comedy', 'humor', 'hilarious', 'joke', 'laugh', 'entertaining', 'fails', 
+                     'epic fail', 'instant karma', 'prank', 'bloopers', 'comedy gold', 'dad jokes'],
+            'traumatic': ['accident', 'tragedy', 'disaster', 'emergency', 'breaking news', 'shocking',
+                        'dramatic rescue', 'natural disaster', 'police chase', 'survival story', 'near death',
+                        'extreme weather', 'earthquake', 'tornado', 'avalanche', 'explosion']
+        }
+        
+        for category, keywords in category_keywords.items():
+            keyword_matches = sum(1 for kw in keywords if kw in title_desc_text)
+            if keyword_matches > 0:
+                matching_categories.append(category)
+                self.add_log(f"Video matches {category} category ({keyword_matches} keywords)", "INFO")
+        
+        # If no specific category matches, skip video
+        if not matching_categories:
+            return False, "No category keywords matched", []
+        
+        return True, details, matching_categories
     
-    def collect_videos(self, target_count: int, category: str, spreadsheet_id: str = None, require_captions: bool = True, progress_callback=None):
-        """Main collection logic"""
+    def collect_videos(self, target_count: int, spreadsheet_id: str = None, require_captions: bool = True, progress_callback=None):
+        """Main collection logic - tests each video against all categories"""
         collected = []
         
-        if category == 'mixed':
-            categories = ['heartwarming', 'funny', 'traumatic']
-        else:
-            categories = [category]
+        # Use all categories for search
+        categories = ['heartwarming', 'funny', 'traumatic']
         
-        self.add_log(f"Starting collection for category: {category}, target: {target_count} videos", "INFO")
+        self.add_log(f"Starting collection, testing each video against all categories, target: {target_count} videos", "INFO")
         
         category_index = 0
         attempts = 0
@@ -534,7 +558,7 @@ class YouTubeCollector:
                 query = random.choice(available_queries)
             
             st.session_state.used_queries.add(query)
-            self.add_log(f"Searching category '{current_category}': {query}", "INFO")
+            self.add_log(f"Searching with '{current_category}' query: {query}", "INFO")
             
             search_results = self.search_videos(query)
             
@@ -556,38 +580,45 @@ class YouTubeCollector:
                 videos_checked_ids.add(video_id)
                 st.session_state.collector_stats['checked'] += 1
                 
-                result = self.validate_video(item, require_captions)
+                # Use new multi-category validation
+                result = self.validate_video_for_categories(item, require_captions)
                 
-                if result[0]:
+                if result[0]:  # Video passes technical checks
                     details = result[1]
+                    matching_categories = result[2]
                     
-                    video_record = {
-                        'video_id': video_id,
-                        'title': details['snippet']['title'],
-                        'url': f"https://youtube.com/watch?v={video_id}",
-                        'category': current_category,
-                        'search_query': query,
-                        'duration_seconds': int(isodate.parse_duration(
-                            details['contentDetails']['duration']
-                        ).total_seconds()),
-                        'view_count': int(details['statistics'].get('viewCount', 0)),
-                        'like_count': int(details['statistics'].get('likeCount', 0)),
-                        'comment_count': int(details['statistics'].get('commentCount', 0)),
-                        'published_at': details['snippet']['publishedAt'],
-                        'channel_title': details['snippet']['channelTitle'],
-                        'tags': ','.join(details['snippet'].get('tags', [])),
-                        'collected_at': datetime.now().isoformat()
-                    }
-                    
-                    collected.append(video_record)
-                    st.session_state.collected_videos.append(video_record)
-                    st.session_state.collector_stats['found'] += 1
-                    videos_found_this_query += 1
-                    
-                    self.add_log(f"Added: {video_record['title'][:50]}...", "SUCCESS")
-                    
-                    if progress_callback:
-                        progress_callback(len(collected), target_count)
+                    # Create one record for each matching category
+                    for category in matching_categories:
+                        if len(collected) >= target_count:
+                            break
+                            
+                        video_record = {
+                            'video_id': video_id,
+                            'title': details['snippet']['title'],
+                            'url': f"https://youtube.com/watch?v={video_id}",
+                            'category': category,  # This will be different for each record
+                            'search_query': query,
+                            'duration_seconds': int(isodate.parse_duration(
+                                details['contentDetails']['duration']
+                            ).total_seconds()),
+                            'view_count': int(details['statistics'].get('viewCount', 0)),
+                            'like_count': int(details['statistics'].get('likeCount', 0)),
+                            'comment_count': int(details['statistics'].get('commentCount', 0)),
+                            'published_at': details['snippet']['publishedAt'],
+                            'channel_title': details['snippet']['channelTitle'],
+                            'tags': ','.join(details['snippet'].get('tags', [])),
+                            'collected_at': datetime.now().isoformat()
+                        }
+                        
+                        collected.append(video_record)
+                        st.session_state.collected_videos.append(video_record)
+                        st.session_state.collector_stats['found'] += 1
+                        videos_found_this_query += 1
+                        
+                        self.add_log(f"Added: {video_record['title'][:50]}... (category: {category})", "SUCCESS")
+                        
+                        if progress_callback:
+                            progress_callback(len(collected), target_count)
                 else:
                     reason = result[1]
                     st.session_state.collector_stats['rejected'] += 1
@@ -1094,16 +1125,13 @@ def main():
         
         with st.sidebar:
             st.subheader("Collection Settings")
-            category = st.selectbox(
-                "Content Category",
-                options=['heartwarming', 'funny', 'traumatic', 'mixed']
-            )
             
             target_count = st.number_input(
                 "Target Video Count",
                 min_value=1,
                 max_value=500,
-                value=10
+                value=10,
+                help="Videos will be tested against all categories automatically"
             )
             
             auto_export = st.checkbox(
@@ -1120,6 +1148,8 @@ def main():
                 "Require captions",
                 value=True
             )
+            
+            st.info("Videos are automatically tested against all three categories: heartwarming, funny, and traumatic. Each video may appear multiple times if it matches multiple categories.")
         
         # Statistics display
         col1, col2, col3 = st.columns(3)
@@ -1173,7 +1203,6 @@ def main():
                             with st.spinner(f"Collecting {target_count} videos..."):
                                 videos = collector.collect_videos(
                                     target_count=target_count,
-                                    category=category,
                                     spreadsheet_id=spreadsheet_id,
                                     require_captions=require_captions,
                                     progress_callback=update_progress
@@ -1269,25 +1298,35 @@ def main():
             if st.session_state.is_rating:
                 try:
                     rater = VideoRater(youtube_api_key)
+                    exporter = GoogleSheetsExporter(sheets_creds)
                     
-                    # Check quota
-                    quota_available, quota_message = rater.check_quota_available()
-                    
-                    if not quota_available:
-                        st.error(f"Cannot continue rating: {quota_message}")
-                        st.session_state.is_rating = False
-                    else:
+                    # Continuous rating loop
+                    while st.session_state.is_rating:
+                        # Check quota before each video
+                        quota_available, quota_message = rater.check_quota_available()
+                        
+                        if not quota_available:
+                            st.error(f"Stopping rating: {quota_message}")
+                            st.session_state.is_rating = False
+                            break
+                        
                         # Get next video from raw_links
-                        exporter = GoogleSheetsExporter(sheets_creds)
                         next_video = exporter.get_next_raw_video(spreadsheet_id)
                         
                         if not next_video:
-                            st.info("No videos available for rating in raw_links sheet.")
+                            st.success("All videos have been processed! No more videos in raw_links.")
                             st.session_state.is_rating = False
-                        else:
-                            # Display video info and use category from raw_links
-                            video_category = next_video.get('category', 'heartwarming')
-                            st.markdown(f"### {next_video.get('title', 'Unknown Title')}")
+                            break
+                        
+                        # Display video info and use category from raw_links
+                        video_category = next_video.get('category', 'heartwarming')
+                        
+                        # Create a container for the current video being processed
+                        video_container = st.container()
+                        
+                        with video_container:
+                            st.markdown(f"### Currently Processing:")
+                            st.markdown(f"**Title:** {next_video.get('title', 'Unknown Title')}")
                             st.markdown(f"**Channel:** {next_video.get('channel_title', 'Unknown')}")
                             st.markdown(f"**Category:** {video_category} {CATEGORIES.get(video_category, {}).get('emoji', '')}")
                             
@@ -1298,11 +1337,12 @@ def main():
                                 st.metric("Likes", f"{int(next_video.get('like_count', 0)):,}")
                             with col3:
                                 st.metric("Comments", f"{int(next_video.get('comment_count', 0)):,}")
-                            
-                            # Analyze video using category from raw_links
-                            with st.spinner("Analyzing video..."):
-                                video_id = next_video.get('video_id')
-                                if video_id:
+                        
+                        # Analyze video using category from raw_links
+                        with st.spinner("Analyzing video..."):
+                            video_id = next_video.get('video_id')
+                            if video_id:
+                                try:
                                     video_data = rater.fetch_video_data(video_id)
                                     analysis = rater.calculate_category_score(video_data, video_category)
                                     
@@ -1333,35 +1373,44 @@ def main():
                                                     <em>"{moment['comment'][:100]}{'...' if len(moment['comment']) > 100 else ''}"</em>
                                                 </div>
                                                 """, unsafe_allow_html=True)
+                                        else:
+                                            st.info("No timestamped moments found")
                                     
-                                    # Action buttons
-                                    col1, col2 = st.columns(2)
+                                    # Process the video automatically
+                                    exporter.delete_raw_video(spreadsheet_id, next_video['row_number'])
                                     
-                                    with col1:
-                                        if st.button("Process Video", type="primary"):
-                                            # Delete from raw_links regardless of score
-                                            exporter.delete_raw_video(spreadsheet_id, next_video['row_number'])
-                                            
-                                            # If score >= 7.5, add to tobe_links
-                                            if score >= 7.5:
-                                                exporter.add_to_tobe_links(spreadsheet_id, next_video, analysis)
-                                                st.session_state.rater_stats['moved_to_tobe'] += 1
-                                                st.success(f"Video scored {score:.1f}/10 - Moved to tobe_links!")
-                                            else:
-                                                st.info(f"Video scored {score:.1f}/10 - Below threshold, removed from raw_links.")
-                                            
-                                            st.session_state.rater_stats['rated'] += 1
-                                            time.sleep(2)
-                                            st.rerun()
+                                    # If score >= 7.5, add to tobe_links
+                                    if score >= 7.5:
+                                        exporter.add_to_tobe_links(spreadsheet_id, next_video, analysis)
+                                        st.session_state.rater_stats['moved_to_tobe'] += 1
+                                        st.success(f"✅ Score: {score:.1f}/10 - Moved to tobe_links!")
+                                        rater.add_log(f"Video {next_video.get('title', '')[:50]} scored {score:.1f} - moved to tobe_links", "SUCCESS")
+                                    else:
+                                        st.info(f"ℹ️ Score: {score:.1f}/10 - Below threshold, removed from raw_links.")
+                                        rater.add_log(f"Video {next_video.get('title', '')[:50]} scored {score:.1f} - removed", "INFO")
                                     
-                                    with col2:
-                                        if st.button("Skip Video"):
-                                            st.session_state.is_rating = False
-                                            st.rerun()
+                                    st.session_state.rater_stats['rated'] += 1
+                                    
+                                    # Brief pause before next video
+                                    time.sleep(2)
+                                    
+                                    # Clear the container for next video
+                                    video_container.empty()
                                 
-                                else:
-                                    st.error("No video ID found")
-                                    st.session_state.is_rating = False
+                                except Exception as e:
+                                    st.error(f"Error analyzing video: {str(e)}")
+                                    rater.add_log(f"Error analyzing video: {str(e)}", "ERROR")
+                                    # Still delete the problematic video to avoid infinite loop
+                                    exporter.delete_raw_video(spreadsheet_id, next_video['row_number'])
+                                    time.sleep(1)
+                            else:
+                                st.error("No video ID found")
+                                exporter.delete_raw_video(spreadsheet_id, next_video['row_number'])
+                        
+                        # Small delay and rerun to continue the loop
+                        if st.session_state.is_rating:  # Check if still rating
+                            time.sleep(0.5)
+                            st.rerun()
                 
                 except Exception as e:
                     st.error(f"Rating error: {str(e)}")
