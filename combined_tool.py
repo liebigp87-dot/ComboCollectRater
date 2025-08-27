@@ -178,6 +178,7 @@ class GoogleDriveLogger:
             # Download current content
             file_id = self.log_files.get(filename)
             if not file_id:
+                st.error(f"Log file {filename} not found in Drive")
                 return
             
             request = self.service.files().get_media(fileId=file_id)
@@ -190,8 +191,12 @@ class GoogleDriveLogger:
             # Parse existing JSON
             fh.seek(0)
             try:
-                logs = json.loads(fh.getvalue().decode('utf-8'))
-            except:
+                content = fh.getvalue().decode('utf-8')
+                logs = json.loads(content) if content.strip() else []
+            except json.JSONDecodeError:
+                logs = []
+            except Exception as e:
+                st.error(f"Error parsing log file content: {str(e)}")
                 logs = []
             
             # Add new entry
@@ -215,7 +220,8 @@ class GoogleDriveLogger:
             ).execute()
             
         except Exception as e:
-            print(f"Error logging to {filename}: {str(e)}")
+            st.error(f"Error logging to {filename}: {str(e)}")
+            print(f"Drive logging error: {str(e)}")  # Also print for debugging
     
     def get_log_content(self, filename: str) -> str:
         """Get log file content for viewing"""
@@ -723,8 +729,8 @@ class YouTubeCollector:
             self.add_log(f"Error checking captions: {str(e)}", "WARNING")
             return False
     
-    def validate_video(self, search_item: Dict, require_captions: bool = True) -> Tuple[bool, str]:
-        """Validate video against collection criteria including discarded check"""
+    def validate_video_for_category(self, search_item: Dict, target_category: str, require_captions: bool = True) -> Tuple[bool, str]:
+        """Validate video against collection criteria for specific category"""
         video_id = search_item['id']['videoId']
         video_url = f"https://youtube.com/watch?v={video_id}"
         
@@ -785,6 +791,30 @@ class YouTubeCollector:
         if view_count < 10000:
             return False, f"View count too low ({view_count} < 10,000)"
         
+        # Category relevance check - basic keyword matching
+        title_desc_text = (title + ' ' + details['snippet'].get('description', '')).lower()
+        
+        category_keywords = {
+            'heartwarming': ['heartwarming', 'touching', 'emotional', 'reunion', 'surprise', 'family', 'love', 
+                           'soldier', 'homecoming', 'dog reunion', 'acts kindness', 'baby first time', 
+                           'proposal reaction', 'homeless helped', 'teacher surprised', 'saving animal',
+                           'grateful', 'wholesome', 'sweet', 'helping'],
+            'funny': ['funny', 'comedy', 'humor', 'hilarious', 'joke', 'laugh', 'entertaining', 'fails', 
+                     'epic fail', 'instant karma', 'prank', 'bloopers', 'comedy gold', 'dad jokes',
+                     'silly', 'amusing', 'comical', 'laughing'],
+            'traumatic': ['accident', 'tragedy', 'disaster', 'emergency', 'breaking news', 'shocking',
+                        'dramatic rescue', 'natural disaster', 'police chase', 'survival story', 'near death',
+                        'extreme weather', 'earthquake', 'tornado', 'avalanche', 'explosion',
+                        'crash', 'incident', 'dangerous', 'intense']
+        }
+        
+        keywords = category_keywords.get(target_category, [])
+        keyword_matches = sum(1 for kw in keywords if kw in title_desc_text)
+        
+        if keyword_matches == 0:
+            return False, f"No {target_category} keywords found in title/description"
+        
+        self.add_log(f"Video matches {target_category} category ({keyword_matches} keyword matches)", "INFO")
         return True, details
     
     def collect_videos(self, target_count: int, category: str, spreadsheet_id: str = None, require_captions: bool = True, progress_callback=None):
@@ -841,7 +871,7 @@ class YouTubeCollector:
                 videos_checked_ids.add(video_id)
                 st.session_state.collector_stats['checked'] += 1
                 
-                result = self.validate_video(item, require_captions)
+                result = self.validate_video_for_category(item, current_category, require_captions)
                 
                 if result[0]:
                     details = result[1]
@@ -1438,25 +1468,37 @@ def main():
                 
                 with col1:
                     if st.button("View Collector Log"):
-                        log_content = st.session_state.drive_logger.get_log_content('data_collector.json')
-                        st.text_area("Data Collector Log", log_content, height=300)
+                        try:
+                            log_content = st.session_state.drive_logger.get_log_content('data_collector.json')
+                            st.text_area("Data Collector Log", log_content, height=300, key="collector_log")
+                        except Exception as e:
+                            st.error(f"Error viewing collector log: {str(e)}")
                 
                 with col2:
                     if st.button("View Rater Log"):
-                        log_content = st.session_state.drive_logger.get_log_content('video_rater.json')
-                        st.text_area("Video Rater Log", log_content, height=300)
+                        try:
+                            log_content = st.session_state.drive_logger.get_log_content('video_rater.json')
+                            st.text_area("Video Rater Log", log_content, height=300, key="rater_log")
+                        except Exception as e:
+                            st.error(f"Error viewing rater log: {str(e)}")
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
                     if st.button("Reset Collector Log"):
-                        st.session_state.drive_logger.reset_log_file('data_collector.json')
-                        st.success("Data Collector log reset")
+                        try:
+                            st.session_state.drive_logger.reset_log_file('data_collector.json')
+                            st.success("Data Collector log reset")
+                        except Exception as e:
+                            st.error(f"Error resetting collector log: {str(e)}")
                 
                 with col2:
                     if st.button("Reset Rater Log"):
-                        st.session_state.drive_logger.reset_log_file('video_rater.json')
-                        st.success("Video Rater log reset")
+                        try:
+                            st.session_state.drive_logger.reset_log_file('video_rater.json')
+                            st.success("Video Rater log reset")
+                        except Exception as e:
+                            st.error(f"Error resetting rater log: {str(e)}")
         
         else:
             st.session_state.logging_enabled = False
@@ -1733,8 +1775,8 @@ def main():
                                     # Then delete from raw_links
                                     exporter.delete_raw_video(spreadsheet_id, next_video['row_number'])
                                     
-                                    # If score >= 7.5, add to tobe_links AND time_comments
-                                    if score >= 7.5:
+                                    # If score >= 6.5, add to tobe_links AND time_comments
+                                    if score >= 6.5:
                                         exporter.add_to_tobe_links(spreadsheet_id, next_video, analysis)
                                         
                                         # Also add time_comments for qualifying videos
@@ -1812,4 +1854,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main() 
