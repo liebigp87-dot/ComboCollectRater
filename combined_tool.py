@@ -1509,39 +1509,11 @@ def main():
                         if st.button("▶️ Start Auto Mode", 
                                     disabled=not youtube_api_key or not sheets_creds or not spreadsheet_id,
                                     type="primary"):
-                            try:
-                                # Pre-flight checks before starting auto mode
-                                set_status('info', "AUTO MODE: Performing startup checks...")
-                                
-                                # Test API key
-                                test_collector = YouTubeCollector(youtube_api_key)
-                                quota_available, quota_message = test_collector.check_quota_available()
-                                
-                                if not quota_available:
-                                    set_status('error', f"AUTO MODE STARTUP FAILED: {quota_message}")
-                                    st.rerun()
-                                    return
-                                
-                                # Test Google Sheets connection
-                                test_exporter = GoogleSheetsExporter(sheets_creds)
-                                test_sheet = test_exporter.get_spreadsheet_by_id(spreadsheet_id)
-                                
-                                if not test_sheet:
-                                    set_status('error', "AUTO MODE STARTUP FAILED: Cannot access Google Sheets")
-                                    st.rerun()
-                                    return
-                                
-                                # All checks passed
-                                st.session_state.auto_mode_running = True
-                                st.session_state.auto_mode_stats = {'collections_completed': 0, 'last_check': 0, 'next_check': 0}
-                                st.session_state.auto_mode_error_count = 0
-                                set_status('info', "AUTO MODE STARTED: All checks passed, monitoring quota")
-                                
-                            except Exception as e:
-                                set_status('error', f"AUTO MODE STARTUP FAILED: {str(e)}")
-                                st.session_state.auto_mode_running = False
-                                st.session_state.auto_mode_error_count = 0
-                            
+                            # Lightweight startup - defer heavy checks until first run
+                            st.session_state.auto_mode_running = True
+                            st.session_state.auto_mode_stats = {'collections_completed': 0, 'last_check': 0, 'next_check': 0}
+                            st.session_state.auto_mode_error_count = 0
+                            set_status('info', "AUTO MODE STARTED: Will perform first check shortly")
                             st.rerun()
                     
                     with col2:
