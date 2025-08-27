@@ -1,41 +1,4 @@
-if auto_export and sheets_creds and videos:
-                                try:
-                                    collector.add_log(f"Starting auto-export of {len(videos)} videos to Google Sheets", "INFO")
-                                    if not exporter:
-                                        exporter = GoogleSheetsExporter(sheets_creds)
-                                        collector.add_log("Initialized Google Sheets exporter", "INFO")
-                                    
-                                    collector.add_log(f"Attempting to export to spreadsheet ID: {spreadsheet_id}", "INFO")
-                                    sheet_url = exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
-                                    
-                                    if sheet_url:
-                                        st.success("Exported to Google Sheets!")
-                                        st.markdown(f"[Open Spreadsheet]({sheet_url})")
-                                        collector.add_log(f"✅ EXPORT SUCCESS: {len(videos)} videos exported to raw_links sheet", "SUCCESS")
-                                        collector.add_log(f"Spreadsheet URL: {sheet_url}", "INFO")
-                                    else:
-                                        collector.add_log("❌ EXPORT FAILED: No spreadsheet URL returned", "ERROR")
-                                        st.error("Export completed but no URL returned")
-                                        
-                                except Exception as e:
-                                    error_msg = str(e)
-                                    collector.add_log(f"❌ EXPORT ERROR: {error_msg}", "ERROR")
-                                    st.error(f"Export failed: {error_msg}")
-                                    
-                                    # Additional error details
-                                    if "authentication" in error_msg.lower():
-                                        collector.add_log("Check Google Sheets service account credentials", "ERROR")
-                                    elif "permission" in error_msg.lower():
-                                        collector.add_log("Check if service account has write access to spreadsheet", "ERROR")
-                                    elif "spreadsheet" in error_msg.lower():
-                                        collector.add_log("Check if spreadsheet ID is correct and accessible", "ERROR")
-                            else:
-                                if not auto_export:
-                                    collector.add_log("Auto-export disabled - videos collected but not exported", "INFO")
-                                elif not sheets_creds:
-                                    collector.add_log("No Google Sheets credentials - cannot export", "WARNING")
-                                elif not videos:
-                                    collector.add_log("No videos collected - nothing to export", "INFO")"""
+"""
 Combined YouTube Data Collector & Video Rating Tool
 Collects YouTube videos and rates them for content suitability
 """
@@ -278,6 +241,26 @@ class GoogleSheetsExporter:
         except Exception as e:
             st.error(f"Error adding to discarded: {str(e)}")
     
+    def load_discarded_urls(self, spreadsheet_id: str) -> set:
+        """Load existing URLs from discarded sheet"""
+        try:
+            spreadsheet = self.get_spreadsheet_by_id(spreadsheet_id)
+            try:
+                worksheet = spreadsheet.worksheet("discarded")
+                all_values = worksheet.get_all_values()
+                
+                if len(all_values) > 1:
+                    # Skip header row, get URLs from first column
+                    discarded_urls = {row[0] for row in all_values[1:] if row and row[0]}
+                    return discarded_urls
+            except gspread.exceptions.WorksheetNotFound:
+                # Sheet doesn't exist yet, return empty set
+                pass
+            return set()
+        except Exception as e:
+            st.error(f"Error loading discarded URLs: {str(e)}")
+            return set()
+    
     def add_time_comments(self, spreadsheet_id: str, video_id: str, video_url: str, comments_analysis: Dict):
         """Add timestamped and category-matched comments to time_comments table"""
         try:
@@ -312,68 +295,6 @@ class GoogleSheetsExporter:
                 
         except Exception as e:
             st.error(f"Error adding to time_comments: {str(e)}")
-        """Load existing URLs from discarded sheet"""
-        try:
-            spreadsheet = self.get_spreadsheet_by_id(spreadsheet_id)
-            try:
-                worksheet = spreadsheet.worksheet("discarded")
-                all_values = worksheet.get_all_values()
-                
-                if len(all_values) > 1:
-                    # Skip header row, get URLs from first column
-                    discarded_urls = {row[0] for row in all_values[1:] if row and row[0]}
-                    return discarded_urls
-            except gspread.exceptions.WorksheetNotFound:
-                # Sheet doesn't exist yet, return empty set
-                pass
-            return set()
-        except Exception as e:
-            st.error(f"Error loading discarded URLs: {str(e)}")
-            return set()
-        """Add video to tobe_links sheet with analysis data"""
-        try:
-            spreadsheet = self.get_spreadsheet_by_id(spreadsheet_id)
-            
-            try:
-                worksheet = spreadsheet.worksheet("tobe_links")
-            except gspread.exceptions.WorksheetNotFound:
-                worksheet = spreadsheet.add_worksheet(title="tobe_links", rows=1000, cols=25)
-                
-                # Create headers combining raw_links + analysis data
-                headers = [
-                    'video_id', 'title', 'url', 'category', 'search_query', 
-                    'duration_seconds', 'view_count', 'like_count', 'comment_count',
-                    'published_at', 'channel_title', 'tags', 'collected_at',
-                    'score', 'confidence', 'timestamped_moments', 'category_validation',
-                    'analysis_timestamp'
-                ]
-                worksheet.append_row(headers)
-            
-            # Prepare row data
-            row_data = [
-                video_data.get('video_id', ''),
-                video_data.get('title', ''),
-                video_data.get('url', ''),
-                video_data.get('category', ''),
-                video_data.get('search_query', ''),
-                video_data.get('duration_seconds', ''),
-                video_data.get('view_count', ''),
-                video_data.get('like_count', ''),
-                video_data.get('comment_count', ''),
-                video_data.get('published_at', ''),
-                video_data.get('channel_title', ''),
-                video_data.get('tags', ''),
-                video_data.get('collected_at', ''),
-                analysis_data.get('final_score', ''),
-                analysis_data.get('confidence', ''),
-                len(analysis_data.get('comments_analysis', {}).get('timestamped_moments', [])),
-                analysis_data.get('comments_analysis', {}).get('category_validation', ''),
-                datetime.now().isoformat()
-            ]
-            
-            worksheet.append_row(row_data)
-        except Exception as e:
-            st.error(f"Error adding to tobe_links: {str(e)}")
     
     def export_to_sheets(self, videos: List[Dict], spreadsheet_id: str = None, spreadsheet_name: str = "YouTube_Collection_Data"):
         """Export videos to raw_links sheet"""
@@ -425,6 +346,7 @@ class YouTubeCollector:
         self.sheets_exporter = sheets_exporter
         self.existing_sheet_ids = set()
         self.existing_queries = set()
+        self.discarded_urls = set()
         
         # Search queries for unified categories
         self.search_queries = {
@@ -594,6 +516,75 @@ class YouTubeCollector:
             self.add_log(f"Error checking captions: {str(e)}", "WARNING")
             return False
     
+    def load_existing_sheet_ids(self, spreadsheet_id: str) -> set:
+        """Load existing video IDs from Google Sheet"""
+        try:
+            if self.sheets_exporter:
+                spreadsheet = self.sheets_exporter.get_spreadsheet_by_id(spreadsheet_id)
+                worksheet = spreadsheet.worksheet("raw_links")
+                all_values = worksheet.get_all_values()
+                
+                if len(all_values) > 1:
+                    headers = all_values[0]
+                    video_id_index = headers.index('video_id') if 'video_id' in headers else 0
+                    existing_ids = {row[video_id_index] for row in all_values[1:] if row[video_id_index]}
+                    self.add_log(f"Loaded {len(existing_ids)} existing video IDs from raw_links", "INFO")
+                    return existing_ids
+            return set()
+        except Exception as e:
+            self.add_log(f"Could not load existing sheet IDs: {str(e)}", "WARNING")
+            return set()
+    
+    def load_discarded_urls(self, spreadsheet_id: str) -> set:
+        """Load discarded URLs to prevent reprocessing"""
+        try:
+            if self.sheets_exporter:
+                discarded_urls = self.sheets_exporter.load_discarded_urls(spreadsheet_id)
+                self.add_log(f"Loaded {len(discarded_urls)} discarded URLs for duplicate check", "INFO")
+                return discarded_urls
+            return set()
+        except Exception as e:
+            self.add_log(f"Could not load discarded URLs: {str(e)}", "WARNING")
+            return set()
+    
+    def load_used_queries(self, spreadsheet_id: str) -> set:
+        """Load previously used queries from Google Sheet"""
+        try:
+            if self.sheets_exporter:
+                spreadsheet = self.sheets_exporter.get_spreadsheet_by_id(spreadsheet_id)
+                try:
+                    worksheet = spreadsheet.worksheet("used_queries")
+                    all_values = worksheet.get_all_values()
+                    
+                    if len(all_values) > 1:
+                        used_queries = {row[0] for row in all_values[1:] if row[0]}
+                        self.add_log(f"Loaded {len(used_queries)} previously used queries", "INFO")
+                        return used_queries
+                except gspread.exceptions.WorksheetNotFound:
+                    worksheet = spreadsheet.add_worksheet(title="used_queries", rows=1000, cols=5)
+                    worksheet.append_row(['query', 'category', 'timestamp', 'videos_found', 'session_id'])
+                    self.add_log("Created new used_queries worksheet", "INFO")
+            return set()
+        except Exception as e:
+            self.add_log(f"Could not load used queries: {str(e)}", "WARNING")
+            return set()
+    
+    def save_used_query(self, spreadsheet_id: str, query: str, category: str, videos_found: int):
+        """Save used query to Google Sheet"""
+        try:
+            if self.sheets_exporter:
+                spreadsheet = self.sheets_exporter.get_spreadsheet_by_id(spreadsheet_id)
+                worksheet = spreadsheet.worksheet("used_queries")
+                worksheet.append_row([
+                    query,
+                    category,
+                    datetime.now().isoformat(),
+                    videos_found,
+                    st.session_state.get('session_id', 'manual')
+                ])
+        except Exception as e:
+            self.add_log(f"Could not save used query: {str(e)}", "WARNING")
+    
     def validate_video_for_category(self, search_item: Dict, target_category: str, require_captions: bool = True) -> Tuple[bool, str]:
         """Validate video against collection criteria for specific category with detailed logging"""
         video_id = search_item['id']['videoId']
@@ -738,6 +729,13 @@ class YouTubeCollector:
         
         self.add_log(f"Starting collection for category: {category}, target: {target_count} videos", "INFO")
         
+        # Load existing data from sheet
+        if spreadsheet_id and self.sheets_exporter:
+            self.existing_sheet_ids = self.load_existing_sheet_ids(spreadsheet_id)
+            self.discarded_urls = self.load_discarded_urls(spreadsheet_id)
+            self.existing_queries = self.load_used_queries(spreadsheet_id)
+            st.session_state.used_queries.update(self.existing_queries)
+        
         category_index = 0
         attempts = 0
         max_attempts = 30
@@ -817,9 +815,12 @@ class YouTubeCollector:
                 else:
                     reason = result[1]
                     st.session_state.collector_stats['rejected'] += 1
-                    self.add_log(f"Rejected: {item['snippet']['title'][:50]}... - {reason}", "WARNING")
                 
                 time.sleep(0.3)
+            
+            # Save used query
+            if spreadsheet_id and self.sheets_exporter:
+                self.save_used_query(spreadsheet_id, query, current_category, videos_found_this_query)
             
             if videos_found_this_query == 0:
                 category_index += 1
@@ -1322,8 +1323,7 @@ def main():
             st.subheader("Collection Settings")
             category = st.selectbox(
                 "Content Category",
-                options=['heartwarming', 'funny', 'traumatic', 'mixed'],
-                help="Choose category to search for specific content type"
+                options=['heartwarming', 'funny', 'traumatic', 'mixed']
             )
             
             target_count = st.number_input(
@@ -1410,6 +1410,7 @@ def main():
                             
                             if auto_export and sheets_creds and videos:
                                 try:
+                                    collector.add_log(f"Starting auto-export of {len(videos)} videos to Google Sheets", "INFO")
                                     if not exporter:
                                         exporter = GoogleSheetsExporter(sheets_creds)
                                         collector.add_log("Initialized Google Sheets exporter", "INFO")
@@ -1676,7 +1677,7 @@ def main():
     # Activity log
     with st.expander("Activity Log", expanded=False):
         if st.session_state.logs:
-            for log in st.session_state.logs[-10:]:  # Show last 10 entries
+            for log in st.session_state.logs[-20:]:  # Show last 20 entries
                 if "SUCCESS" in log:
                     st.success(log)
                 elif "ERROR" in log:
