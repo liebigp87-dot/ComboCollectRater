@@ -39,6 +39,14 @@ except ImportError:
     st.error("Please install isodate: pip install isodate")
     st.stop()
 
+try:
+    from googleapiclient.discovery import build as drive_build
+    from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
+    import io
+except ImportError:
+    st.error("Please install google-api-python-client for Drive access")
+    st.stop()
+
 # Page config
 st.set_page_config(
     page_title="YouTube Collection & Rating Tool",
@@ -111,6 +119,151 @@ if 'used_queries' not in st.session_state:
     st.session_state.used_queries = set()
 if 'analysis_history' not in st.session_state:
     st.session_state.analysis_history = []
+
+class GoogleDriveLogger:
+    """Handle Google Drive logging functionality"""
+    
+    def __init__(self, credentials_dict: Dict):
+        """Initialize with service account credentials for Drive access"""
+        try:
+            self.creds = Credentials.from_service_account_info(
+                credentials_dict,
+                scopes=['https://www.googleapis.com/auth/drive.file']
+            )
+            self.service = drive_build('drive', 'v3', credentials=self.creds)
+            self.log_files = {}  # Cache file IDs
+            self._ensure_log_files()
+        except Exception as e:
+            raise Exception(f"Failed to initialize Google Drive: {str(e)}")
+    
+    def _ensure_log_files(self):
+        """Ensure log files exist in Google Drive"""
+        log_files = ['data_collector.json', 'video_rater.json']
+        
+        for filename in log_files:
+            try:
+                # Search for existing file
+                results = self.service.files().list(
+                    q=f"name='{filename}' and trashed=false",
+                    fields="files(id, name)"
+                ).execute()
+                
+                files = results.get('files', [])
+                
+                if files:
+                    self.log_files[filename] = files[0]['id']
+                else:
+                    # Create new file with empty JSON array
+                    media = MediaIoBaseUpload(
+                        io.BytesIO(b'[]'),
+                        mimetype='application/json'
+                    )
+                    
+                    file_metadata = {'name': filename}
+                    
+                    file = self.service.files().create(
+                        body=file_metadata,
+                        media_body=media,
+                        fields='id'
+                    ).execute()
+                    
+                    self.log_files[filename] = file.get('id')
+                    
+            except Exception as e:
+                print(f"Error ensuring log file {filename}: {str(e)}")
+    
+    def log_message(self, filename: str, level: str, message: str, session_id: str = ""):
+        """Add log entry to specified file"""
+        try:
+            # Download current content
+            file_id = self.log_files.get(filename)
+            if not file_id:
+                return
+            
+            request = self.service.files().get_media(fileId=file_id)
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+            
+            # Parse existing JSON
+            fh.seek(0)
+            try:
+                logs = json.loads(fh.getvalue().decode('utf-8'))
+            except:
+                logs = []
+            
+            # Add new entry
+            new_entry = {
+                'timestamp': datetime.now().isoformat(),
+                'level': level,
+                'message': message,
+                'session_id': session_id
+            }
+            logs.append(new_entry)
+            
+            # Upload updated content
+            media = MediaIoBaseUpload(
+                io.BytesIO(json.dumps(logs, indent=2).encode('utf-8')),
+                mimetype='application/json'
+            )
+            
+            self.service.files().update(
+                fileId=file_id,
+                media_body=media
+            ).execute()
+            
+        except Exception as e:
+            print(f"Error logging to {filename}: {str(e)}")
+    
+    def get_log_content(self, filename: str) -> str:
+        """Get log file content for viewing"""
+        try:
+            file_id = self.log_files.get(filename)
+            if not file_id:
+                return "Log file not found"
+            
+            request = self.service.files().get_media(fileId=file_id)
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+            
+            fh.seek(0)
+            try:
+                logs = json.loads(fh.getvalue().decode('utf-8'))
+                # Format for display
+                formatted = ""
+                for entry in logs[-50:]:  # Show last 50 entries
+                    formatted += f"[{entry['timestamp']}] {entry['level']}: {entry['message']}\n"
+                return formatted if formatted else "No log entries found"
+            except:
+                return "Error reading log file"
+                
+        except Exception as e:
+            return f"Error accessing log file: {str(e)}"
+    
+    def reset_log_file(self, filename: str):
+        """Reset log file to empty"""
+        try:
+            file_id = self.log_files.get(filename)
+            if not file_id:
+                return
+            
+            media = MediaIoBaseUpload(
+                io.BytesIO(b'[]'),
+                mimetype='application/json'
+            )
+            
+            self.service.files().update(
+                fileId=file_id,
+                media_body=media
+            ).execute()
+            
+        except Exception as e:
+            print(f"Error resetting log file {filename}: {str(e)}")
 
 CATEGORIES = {
     'heartwarming': {
@@ -241,7 +394,40 @@ class GoogleSheetsExporter:
         except Exception as e:
             st.error(f"Error adding to discarded: {str(e)}")
     
-    def load_discarded_urls(self, spreadsheet_id: str) -> set:
+    def add_time_comments(self, spreadsheet_id: str, video_id: str, video_url: str, comments_analysis: Dict):
+        """Add timestamped and category-matched comments to time_comments table"""
+        try:
+            spreadsheet = self.get_spreadsheet_by_id(spreadsheet_id)
+            
+            try:
+                worksheet = spreadsheet.worksheet("time_comments")
+            except gspread.exceptions.WorksheetNotFound:
+                worksheet = spreadsheet.add_worksheet(title="time_comments", rows=1000, cols=10)
+                
+                # Create headers
+                headers = [
+                    'video_id', 'video_url', 'comment_text', 'timestamp', 
+                    'category_matched', 'relevance_score', 'sentiment'
+                ]
+                worksheet.append_row(headers)
+            
+            # Get timestamped moments from analysis
+            moments = comments_analysis.get('timestamped_moments', [])
+            
+            for moment in moments:
+                row_data = [
+                    video_id,
+                    video_url,
+                    moment.get('comment', ''),
+                    moment.get('timestamp', ''),
+                    moment.get('category_matches', 0),
+                    moment.get('relevance_score', 0),
+                    moment.get('sentiment', '')
+                ]
+                worksheet.append_row(row_data)
+                
+        except Exception as e:
+            st.error(f"Error adding to time_comments: {str(e)}")
         """Load existing URLs from discarded sheet"""
         try:
             spreadsheet = self.get_spreadsheet_by_id(spreadsheet_id)
@@ -408,11 +594,24 @@ class YouTubeCollector:
         ]
     
     def add_log(self, message: str, log_type: str = "INFO"):
-        """Add a log entry"""
+        """Add a log entry to session state and Google Drive if enabled"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] COLLECTOR {log_type}: {message}"
         st.session_state.logs.insert(0, log_entry)
         st.session_state.logs = st.session_state.logs[:50]
+        
+        # Also log to Google Drive if enabled
+        if st.session_state.logging_enabled and st.session_state.drive_logger:
+            try:
+                session_id = st.session_state.get('session_id', 'manual')
+                st.session_state.drive_logger.log_message(
+                    'data_collector.json', 
+                    log_type, 
+                    message, 
+                    session_id
+                )
+            except Exception as e:
+                print(f"Drive logging failed: {str(e)}")
     
     def check_quota_available(self) -> Tuple[bool, str]:
         """Check if YouTube API quota is available"""
@@ -700,11 +899,24 @@ class VideoRater:
         self.youtube = build('youtube', 'v3', developerKey=api_key)
     
     def add_log(self, message: str, log_type: str = "INFO"):
-        """Add a log entry"""
+        """Add a log entry to session state and Google Drive if enabled"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] RATER {log_type}: {message}"
         st.session_state.logs.insert(0, log_entry)
         st.session_state.logs = st.session_state.logs[:50]
+        
+        # Also log to Google Drive if enabled
+        if st.session_state.logging_enabled and st.session_state.drive_logger:
+            try:
+                session_id = st.session_state.get('session_id', 'manual')
+                st.session_state.drive_logger.log_message(
+                    'video_rater.json', 
+                    log_type, 
+                    message, 
+                    session_id
+                )
+            except Exception as e:
+                print(f"Drive logging failed: {str(e)}")
     
     def check_quota_available(self) -> Tuple[bool, str]:
         """Check if YouTube API quota is available"""
@@ -1173,6 +1385,83 @@ def main():
         
         if sheets_creds and 'client_email' in sheets_creds:
             st.info(f"Service Account: {sheets_creds['client_email'][:30]}...")
+        
+        st.subheader("Logging Configuration")
+        
+        # Google Drive credentials for logging
+        drive_creds_method = st.radio(
+            "Google Drive Logging Credentials:",
+            ["Same as Sheets", "Separate Drive JSON"]
+        )
+        
+        drive_creds = None
+        if drive_creds_method == "Same as Sheets":
+            drive_creds = sheets_creds
+        else:
+            drive_creds_text = st.text_area(
+                "Google Drive Service Account JSON", 
+                help="Paste service account JSON with Drive access",
+                height=100
+            )
+            if drive_creds_text:
+                try:
+                    drive_creds = json.loads(drive_creds_text)
+                    st.success("Valid Drive JSON")
+                except json.JSONDecodeError as e:
+                    st.error(f"Invalid JSON: {str(e)}")
+        
+        # Logging enable/disable
+        if drive_creds:
+            logging_enabled = st.checkbox(
+                "Enable Google Drive Logging",
+                value=st.session_state.logging_enabled,
+                help="Log activities to Google Drive for persistence across sessions"
+            )
+            
+            if logging_enabled != st.session_state.logging_enabled:
+                st.session_state.logging_enabled = logging_enabled
+                
+                if logging_enabled:
+                    try:
+                        st.session_state.drive_logger = GoogleDriveLogger(drive_creds)
+                        st.success("Google Drive logging enabled")
+                    except Exception as e:
+                        st.error(f"Failed to enable logging: {str(e)}")
+                        st.session_state.logging_enabled = False
+                        st.session_state.drive_logger = None
+                else:
+                    st.session_state.drive_logger = None
+            
+            # Log management buttons (only if logging is enabled)
+            if st.session_state.logging_enabled and st.session_state.drive_logger:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("View Collector Log"):
+                        log_content = st.session_state.drive_logger.get_log_content('data_collector.json')
+                        st.text_area("Data Collector Log", log_content, height=300)
+                
+                with col2:
+                    if st.button("View Rater Log"):
+                        log_content = st.session_state.drive_logger.get_log_content('video_rater.json')
+                        st.text_area("Video Rater Log", log_content, height=300)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("Reset Collector Log"):
+                        st.session_state.drive_logger.reset_log_file('data_collector.json')
+                        st.success("Data Collector log reset")
+                
+                with col2:
+                    if st.button("Reset Rater Log"):
+                        st.session_state.drive_logger.reset_log_file('video_rater.json')
+                        st.success("Video Rater log reset")
+        
+        else:
+            st.session_state.logging_enabled = False
+            st.session_state.drive_logger = None
+            st.info("Enter Google Drive credentials to enable logging")
     
     # Main content based on selected mode
     if mode == "Data Collector":
@@ -1444,12 +1733,21 @@ def main():
                                     # Then delete from raw_links
                                     exporter.delete_raw_video(spreadsheet_id, next_video['row_number'])
                                     
-                                    # If score >= 7.5, add to tobe_links
+                                    # If score >= 7.5, add to tobe_links AND time_comments
                                     if score >= 7.5:
                                         exporter.add_to_tobe_links(spreadsheet_id, next_video, analysis)
+                                        
+                                        # Also add time_comments for qualifying videos
+                                        exporter.add_time_comments(
+                                            spreadsheet_id, 
+                                            video_id, 
+                                            video_url, 
+                                            analysis['comments_analysis']
+                                        )
+                                        
                                         st.session_state.rater_stats['moved_to_tobe'] += 1
                                         st.success(f"✅ Score: {score:.1f}/10 - Moved to tobe_links!")
-                                        rater.add_log(f"Video {next_video.get('title', '')[:50]} scored {score:.1f} - moved to tobe_links", "SUCCESS")
+                                        rater.add_log(f"Video {next_video.get('title', '')[:50]} scored {score:.1f} - moved to tobe_links and time_comments", "SUCCESS")
                                     else:
                                         st.info(f"ℹ️ Score: {score:.1f}/10 - Below threshold, removed from raw_links.")
                                         rater.add_log(f"Video {next_video.get('title', '')[:50]} scored {score:.1f} - removed", "INFO")
@@ -1514,4 +1812,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()
