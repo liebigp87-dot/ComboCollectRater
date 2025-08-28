@@ -113,18 +113,6 @@ if 'analysis_history' not in st.session_state:
     st.session_state.analysis_history = []
 if 'system_status' not in st.session_state:
     st.session_state.system_status = {'type': None, 'message': ''}
-if 'auto_mode_enabled' not in st.session_state:
-    st.session_state.auto_mode_enabled = False
-if 'auto_mode_running' not in st.session_state:
-    st.session_state.auto_mode_running = False
-if 'auto_mode_stats' not in st.session_state:
-    st.session_state.auto_mode_stats = {'collections_completed': 0, 'last_check': 0, 'next_check': 0}
-if 'target_mode_enabled' not in st.session_state:
-    st.session_state.target_mode_enabled = False
-if 'target_videos' not in st.session_state:
-    st.session_state.target_videos = 10
-if 'auto_mode_error_count' not in st.session_state:
-    st.session_state.auto_mode_error_count = 0
 
 def show_status_alert():
     """Display system status alerts prominently"""
@@ -863,92 +851,7 @@ class YouTubeCollector:
             attempts += 1
             time.sleep(1.5)
         
-    def check_auto_mode_safe(self, api_key: str, sheets_exporter=None, spreadsheet_id: str = None):
-        """Safely check and execute auto mode without blocking UI"""
-        try:
-            current_time = time.time()
-            
-            # Check if an hour has passed since last check or this is first run
-            if (st.session_state.auto_mode_stats['last_check'] == 0 or 
-                current_time - st.session_state.auto_mode_stats['last_check'] >= 3600):
-                
-                # Update check time first
-                st.session_state.auto_mode_stats['last_check'] = current_time
-                st.session_state.auto_mode_stats['next_check'] = current_time + 3600
-                
-                self.add_log("AUTO MODE: Checking quota availability", "INFO")
-                
-                # Quick quota check with timeout protection
-                try:
-                    quota_available, quota_message = self.check_quota_available()
-                except Exception as e:
-                    self.add_log(f"AUTO MODE: Quota check failed - {str(e)}", "ERROR")
-                    raise Exception(f"Quota check failed: {str(e)}")
-                
-                if quota_available:
-                    self.add_log("AUTO MODE: Quota available, starting collection", "INFO")
-                    
-                    # Quick validation of requirements
-                    if not sheets_exporter:
-                        raise Exception("Google Sheets exporter not available")
-                    if not spreadsheet_id:
-                        raise Exception("Spreadsheet ID not configured")
-                    
-                    # Start collection with error handling
-                    videos = self.collect_videos(
-                        target_count=10,
-                        category='mixed',
-                        spreadsheet_id=spreadsheet_id,
-                        require_captions=True,
-                        progress_callback=None
-                    )
-                    
-                    if videos:
-                        # Export to sheets
-                        sheet_url = sheets_exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
-                        if sheet_url:
-                            st.session_state.auto_mode_stats['collections_completed'] += 1
-                            st.session_state.auto_mode_error_count = 0  # Reset error count on success
-                            self.add_log(f"AUTO MODE: Collection #{st.session_state.auto_mode_stats['collections_completed']} completed - {len(videos)} videos", "SUCCESS")
-                            
-                            # Check quota for immediate next run
-                            try:
-                                quota_still_available, _ = self.check_quota_available()
-                                if quota_still_available:
-                                    st.session_state.auto_mode_stats['last_check'] = 0  # Reset for immediate next run
-                                    set_status('info', f"AUTO MODE: Collection completed, checking for next run...")
-                                    return True
-                                else:
-                                    set_status('info', f"AUTO MODE: Quota exhausted after {st.session_state.auto_mode_stats['collections_completed']} collections")
-                                    return True
-                            except Exception as e:
-                                self.add_log(f"AUTO MODE: Post-collection quota check failed - {str(e)}", "WARNING")
-                                return True  # Continue anyway
-                        else:
-                            raise Exception("Export failed - no URL returned")
-                    else:
-                        self.add_log("AUTO MODE: No videos collected this round", "WARNING")
-                        return True  # Continue auto mode
-                else:
-                    set_status('info', f"AUTO MODE: Waiting for quota refresh - {st.session_state.auto_mode_stats['collections_completed']} collections completed")
-                    return True  # Continue waiting
-                    
-        except Exception as e:
-            # Increment error count
-            st.session_state.auto_mode_error_count += 1
-            error_msg = str(e)
-            
-            # If too many errors, stop auto mode
-            if st.session_state.auto_mode_error_count >= 3:
-                set_status('error', f"AUTO MODE DISABLED: Too many failures ({st.session_state.auto_mode_error_count}) - {error_msg}")
-                st.session_state.auto_mode_running = False
-                st.session_state.auto_mode_error_count = 0
-                return False
-            else:
-                set_status('warning', f"AUTO MODE WARNING: Error #{st.session_state.auto_mode_error_count}/3 - {error_msg}")
-                return True  # Continue but with warning
-        
-        return True
+        return collected
 
 
 class VideoRater:
@@ -1467,72 +1370,6 @@ def main():
                 "Require captions",
                 value=True
             )
-            
-            st.divider()
-            
-            # Auto Mode section
-            st.subheader("🤖 Auto Mode")
-            
-            auto_mode_enabled = st.checkbox(
-                "Enable Auto Mode",
-                value=st.session_state.auto_mode_enabled,
-                disabled=st.session_state.auto_mode_running or st.session_state.is_collecting,
-                help="Automatically collect videos every hour (mixed category, 10 videos)"
-            )
-            
-            if auto_mode_enabled != st.session_state.auto_mode_enabled:
-                st.session_state.auto_mode_enabled = auto_mode_enabled
-                if not auto_mode_enabled:
-                    st.session_state.auto_mode_running = False
-                st.rerun()
-            
-            if st.session_state.auto_mode_enabled:
-                # Auto mode status
-                if st.session_state.auto_mode_running:
-                    next_check_time = st.session_state.auto_mode_stats.get('next_check', 0)
-                    if next_check_time > 0:
-                        remaining_minutes = max(0, int((next_check_time - time.time()) / 60))
-                        st.info(f"⏰ Next check: {remaining_minutes} minutes")
-                    
-                    collections = st.session_state.auto_mode_stats.get('collections_completed', 0)
-                    st.info(f"📊 Collections completed: {collections}")
-                    
-                    if st.button("⏹️ Stop Auto Mode", type="secondary"):
-                        st.session_state.auto_mode_running = False
-                        set_status('warning', "AUTO MODE STOPPED: Process terminated by user")
-                        st.rerun()
-                else:
-                    # Auto mode controls with improved error handling
-                    col1, col2, col3 = st.columns([2, 2, 1])
-                    
-                    with col1:
-                        if st.button("▶️ Start Auto Mode", 
-                                    disabled=not youtube_api_key or not sheets_creds or not spreadsheet_id,
-                                    type="primary"):
-                            # Lightweight startup - defer heavy checks until first run
-                            st.session_state.auto_mode_running = True
-                            st.session_state.auto_mode_stats = {'collections_completed': 0, 'last_check': 0, 'next_check': 0}
-                            st.session_state.auto_mode_error_count = 0
-                            set_status('info', "AUTO MODE STARTED: Will perform first check shortly")
-                            st.rerun()
-                    
-                    with col2:
-                        if st.button("⏹️ Stop Auto Mode", type="secondary"):
-                            st.session_state.auto_mode_running = False
-                            st.session_state.auto_mode_error_count = 0
-                            set_status('warning', "AUTO MODE STOPPED: Process terminated by user")
-                            st.rerun()
-                    
-                    with col3:
-                        # Emergency reset button
-                        if st.button("🔄", help="Emergency Reset", type="secondary"):
-                            st.session_state.auto_mode_running = False
-                            st.session_state.auto_mode_enabled = False
-                            st.session_state.auto_mode_error_count = 0
-                            st.session_state.is_collecting = False
-                            clear_status()
-                            st.success("Emergency reset completed")
-                            st.rerun()
         
         # Statistics display
         col1, col2, col3 = st.columns(3)
@@ -1548,10 +1385,8 @@ def main():
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            if st.button("Start Collection", 
-                        disabled=st.session_state.is_collecting or st.session_state.auto_mode_running, 
-                        type="primary"):
-                clear_status()
+            if st.button("Start Collection", disabled=st.session_state.is_collecting, type="primary"):
+                clear_status()  # Clear any previous status
                 
                 if not youtube_api_key:
                     set_status('error', "COLLECTION ABORTED: YouTube API key required")
@@ -1656,35 +1491,6 @@ def main():
                         st.session_state.is_collecting = False
                         st.rerun()
         
-        # Auto mode monitoring - non-blocking with error handling
-        if (st.session_state.auto_mode_running and 
-            not st.session_state.is_collecting and 
-            st.session_state.auto_mode_enabled):
-            
-            # Only check if we have required components
-            if youtube_api_key and sheets_creds and spreadsheet_id:
-                try:
-                    exporter = GoogleSheetsExporter(sheets_creds)
-                    collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
-                    
-                    # Safe, non-blocking auto mode check
-                    continue_auto = collector.check_auto_mode_safe(youtube_api_key, exporter, spreadsheet_id)
-                    
-                    if not continue_auto:
-                        # Auto mode was stopped due to errors
-                        st.rerun()
-                        
-                except Exception as e:
-                    # Critical error - stop auto mode immediately
-                    set_status('error', f"AUTO MODE CRITICAL ERROR: {str(e)}")
-                    st.session_state.auto_mode_running = False
-                    st.session_state.auto_mode_error_count = 0
-                    st.rerun()
-            else:
-                # Missing requirements - stop auto mode
-                set_status('error', "AUTO MODE STOPPED: Missing API key, credentials, or spreadsheet ID")
-                st.session_state.auto_mode_running = False
-        
         with col2:
             if st.button("Stop", disabled=not st.session_state.is_collecting):
                 set_status('warning', "COLLECTION STOPPED: Process terminated by user")
@@ -1731,39 +1537,6 @@ def main():
         # Show status alerts prominently
         show_status_alert()
         
-        # Target Mode Configuration
-        with st.sidebar:
-            st.subheader("Target Mode")
-            
-            target_mode_enabled = st.checkbox(
-                "Enable Target Mode",
-                value=st.session_state.target_mode_enabled,
-                help="Process videos until reaching target number of tobe_links"
-            )
-            
-            if target_mode_enabled != st.session_state.target_mode_enabled:
-                st.session_state.target_mode_enabled = target_mode_enabled
-                if not target_mode_enabled:
-                    st.session_state.target_progress = 0
-                st.rerun()
-            
-            if st.session_state.target_mode_enabled:
-                target_videos = st.number_input(
-                    "Target Videos for tobe_links",
-                    min_value=1,
-                    max_value=100,
-                    value=st.session_state.target_videos
-                )
-                
-                if target_videos != st.session_state.target_videos:
-                    st.session_state.target_videos = target_videos
-                    st.session_state.target_progress = 0
-                
-                # Show target progress
-                if st.session_state.target_progress > 0:
-                    progress_pct = min(st.session_state.target_progress / st.session_state.target_videos, 1.0)
-                    st.progress(progress_pct, f"Progress: {st.session_state.target_progress}/{st.session_state.target_videos}")
-        
         # Statistics display
         col1, col2, col3 = st.columns(3)
         
@@ -1783,20 +1556,13 @@ def main():
             with col1:
                 if st.button("Start Rating", disabled=st.session_state.is_rating, type="primary"):
                     clear_status()
-                    if st.session_state.target_mode_enabled:
-                        set_status('info', f"TARGET MODE STARTED: Processing until {st.session_state.target_videos} videos reach tobe_links")
-                        st.session_state.target_progress = 0
-                    else:
-                        set_status('info', "RATING STARTED: Processing videos from raw_links")
+                    set_status('info', "RATING STARTED: Processing videos from raw_links")
                     st.session_state.is_rating = True
                     st.rerun()
             
             with col2:
                 if st.button("Stop Rating", disabled=not st.session_state.is_rating):
-                    if st.session_state.target_mode_enabled:
-                        set_status('warning', f"TARGET MODE STOPPED: {st.session_state.target_progress}/{st.session_state.target_videos} completed before stopping")
-                    else:
-                        set_status('warning', "RATING STOPPED: Process terminated by user")
+                    set_status('warning', "RATING STOPPED: Process terminated by user")
                     st.session_state.is_rating = False
                     st.rerun()
             
@@ -1807,21 +1573,11 @@ def main():
                     
                     # Continuous rating loop
                     while st.session_state.is_rating:
-                        # Check if target reached in target mode
-                        if st.session_state.target_mode_enabled and st.session_state.target_progress >= st.session_state.target_videos:
-                            set_status('info', f"TARGET REACHED: {st.session_state.target_progress} videos successfully moved to tobe_links")
-                            st.session_state.is_rating = False
-                            st.rerun()
-                            break
-                        
                         # Check quota before each video
                         quota_available, quota_message = rater.check_quota_available()
                         
                         if not quota_available:
-                            if st.session_state.target_mode_enabled:
-                                set_status('error', f"TARGET MODE ABORTED: {quota_message} - {st.session_state.target_progress}/{st.session_state.target_videos} completed")
-                            else:
-                                set_status('error', f"RATING ABORTED: {quota_message}")
+                            set_status('error', f"RATING ABORTED: {quota_message}")
                             st.session_state.is_rating = False
                             st.rerun()
                             break
@@ -1830,13 +1586,7 @@ def main():
                         next_video = exporter.get_next_raw_video(spreadsheet_id)
                         
                         if not next_video:
-                            if st.session_state.target_mode_enabled:
-                                if st.session_state.target_progress >= st.session_state.target_videos:
-                                    set_status('info', f"TARGET REACHED: {st.session_state.target_progress} videos moved to tobe_links")
-                                else:
-                                    set_status('warning', f"TARGET NOT REACHED: {st.session_state.target_progress}/{st.session_state.target_videos} - No more videos available")
-                            else:
-                                set_status('info', "RATING COMPLETED: All videos processed - no more videos in raw_links")
+                            set_status('info', "RATING COMPLETED: All videos processed - no more videos in raw_links")
                             st.session_state.is_rating = False
                             st.rerun()
                             break
@@ -1922,14 +1672,7 @@ def main():
                                         )
                                         
                                         st.session_state.rater_stats['moved_to_tobe'] += 1
-                                        
-                                        # Update target progress if in target mode
-                                        if st.session_state.target_mode_enabled:
-                                            st.session_state.target_progress += 1
-                                            st.success(f"✅ Score: {score:.1f}/10 - Moved to tobe_links! ({st.session_state.target_progress}/{st.session_state.target_videos})")
-                                        else:
-                                            st.success(f"✅ Score: {score:.1f}/10 - Moved to tobe_links!")
-                                        
+                                        st.success(f"✅ Score: {score:.1f}/10 - Moved to tobe_links!")
                                         rater.add_log(f"Video {next_video.get('title', '')[:50]} scored {score:.1f} - moved to tobe_links and time_comments", "SUCCESS")
                                     else:
                                         st.info(f"ℹ️ Score: {score:.1f}/10 - Below threshold, removed from raw_links.")
