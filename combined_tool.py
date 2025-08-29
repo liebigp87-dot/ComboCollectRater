@@ -389,6 +389,7 @@ class YouTubeCollector:
         # Search queries for unified categories
         self.search_queries = {
             'heartwarming': [
+                # Original queries (minus any conflicting ones)
                 'soldier surprise homecoming', 'dog reunion owner', 'random acts kindness',
                 'baby first time hearing', 'proposal reaction emotional', 'surprise gift reaction',
                 'homeless man helped', 'teacher surprised students', 'reunion after years',
@@ -397,22 +398,53 @@ class YouTubeCollector:
                 'dad meets baby', 'emotional support moment', 'stranger pays bill',
                 'found lost pet', 'surprise donation reaction', 'elderly couple sweet',
                 'child generous sharing', 'unexpected hero saves', 'touching tribute video',
-                'surprise reunion compilation', 'faith humanity restored', 'emotional thank you',
-                'surprise birthday elderly', 'veteran honored ceremony', 'wholesome interaction strangers'
+                'faith humanity restored', 'emotional thank you',
+                'surprise birthday elderly', 'veteran honored ceremony', 'wholesome interaction strangers',
+                # New expanded queries
+                'military surprise family', 'adopted child meets birth parents', 'community rallies sick child',
+                'teacher retirement surprise', 'student surprises janitor', 'neighbor helps neighbor moving',
+                'blind person sees again', 'deaf person hears music', 'wheelchair surprise gift',
+                'cancer survivor celebration', 'graduation surprise parent', 'wedding surprise dance',
+                'pregnancy announcement reaction', 'gender reveal emotional', 'birth announcement family',
+                'foster pet adoption', 'service dog training', 'therapy animal visit',
+                'fundraiser goal reached', 'scholarship surprise student', 'house rebuilt volunteers',
+                'food bank volunteer', 'christmas surprise family', 'birthday surprise homeless',
+                'prom dress donation', 'shoes for students', 'backpack drive school',
+                'elderly person birthday', 'nursing home visit', 'grandparent technology help',
+                'sibling reunion emotional', 'long distance relationship', 'childhood friend reunion',
+                'pay it forward chain', 'anonymous donation recipient', 'good samaritan highway',
+                'lost wallet returned', 'umbrella stranger rain', 'help carrying groceries'
             ],
             'funny': [
-                'funny fails compilation', 'unexpected moments caught', 'comedy sketches viral',
+                # Original queries (removing conflicting ones)
+                'unexpected moments caught', 'comedy sketches viral',
                 'hilarious reactions', 'funny animals doing', 'epic fail video',
                 'instant karma funny', 'comedy gold moments', 'prank goes wrong',
                 'funny kids saying', 'dad jokes reaction', 'wedding fails funny',
-                'sports bloopers hilarious', 'funny news bloopers', 'pet fails compilation',
+                'sports hilarious moments', 'funny news moments', 'pet fails video',
                 'funny work moments', 'hilarious misunderstanding', 'comedy timing perfect',
-                'funny voice over', 'unexpected plot twist', 'funny security camera',
+                'funny voice over', 'unexpected plot twist',
                 'hilarious interview moments', 'comedy accident harmless', 'funny dancing fails',
                 'laughing contagious video', 'funny sleep talking', 'comedy scare pranks',
-                'funny workout fails', 'hilarious costume fails', 'funny zoom fails'
+                'funny workout fails', 'hilarious costume fails', 'funny zoom fails',
+                # New expanded queries
+                'elevator prank harmless', 'autocorrect text fails', 'cooking disaster funny',
+                'parking fail video', 'phone autocorrect mom', 'grocery store slip',
+                'escalator first time', 'automatic door confusion', 'gps directions wrong',
+                'technology grandparents funny', 'smartphone elderly reaction', 'computer password forgot',
+                'delivery driver surprise', 'pizza delivery wrong house', 'food delivery mix up',
+                'weather reporter funny', 'news anchor laugh', 'reporter animal interruption',
+                'kid logic funny', 'children say darndest', 'toddler tantrum funny',
+                'baby taste lemon', 'infant mirror reaction', 'child discovers shadow',
+                'pet door confusion', 'cat vs cucumber', 'dog treats hidden',
+                'office prank harmless', 'coworker surprise funny', 'meeting call funny',
+                'exercise equipment fail', 'yoga pose gone wrong', 'treadmill mishap',
+                'karaoke gone wrong', 'singing shower caught', 'dance lesson fail',
+                'magic trick reveal', 'card trick backfire', 'costume malfunction funny',
+                'autocomplete search funny', 'voice command misunderstood', 'translation app funny'
             ],
             'traumatic': [
+                # Original queries (removing conflicting ones)
                 'shocking moments caught', 'dramatic rescue operation', 'natural disaster footage',
                 'intense police chase', 'survival story real', 'near death experience',
                 'unbelievable close call', 'extreme weather footage', 'emergency response dramatic',
@@ -422,7 +454,20 @@ class YouTubeCollector:
                 'lightning strike caught', 'road rage incident', 'building collapse footage',
                 'helicopter rescue dramatic', 'cliff rescue operation', 'shark encounter real',
                 'volcano eruption footage', 'mudslide caught camera', 'train near miss',
-                'bridge collapse footage', 'explosion caught camera', 'emergency landing footage'
+                'bridge collapse footage', 'explosion caught camera', 'emergency landing footage',
+                # New expanded queries
+                'wildfire escape footage', 'building evacuation emergency', 'storm damage aftermath',
+                'hurricane survivor story', 'tsunami escape video', 'landslide near miss',
+                'sinkhole opens suddenly', 'ice storm danger', 'hail storm damage',
+                'flash flood rescue', 'river rapids rescue', 'ocean current survivor',
+                'mountain rescue operation', 'cave rescue dramatic', 'mine collapse rescue',
+                'construction accident dramatic', 'crane collapse footage', 'scaffolding collapse caught',
+                'fire department rescue', 'paramedic emergency response', 'ambulance emergency call',
+                'coast guard rescue', 'lifeguard dramatic save', 'water rescue operation',
+                'aircraft emergency landing', 'pilot emergency procedure', 'runway emergency landing',
+                'highway pile up', 'multi car accident', 'truck brake failure',
+                'industrial accident footage', 'factory explosion aftermath', 'chemical spill emergency',
+                'gas leak evacuation', 'power line down', 'electrical fire emergency'
             ]
         }
         
@@ -434,7 +479,10 @@ class YouTubeCollector:
         
         self.compilation_keywords = [
             'best of', 'top 10', 'top 20',
-            'montage', 'every time', 'all moments', 'mega compilation'
+            'montage', 'every time', 'all moments', 'mega compilation',
+            'highlights', 'recap', 'supercut', 'mashup', 'ultimate', 'collection', 
+            'greatest hits', 'best moments', 'funniest', 'top 5', 'top 15', 'top 25', 
+            'top 50', 'top 100', 'fails compilation', 'bloopers', 'security camera footage'
         ]
     
     def add_log(self, message: str, log_type: str = "INFO"):
