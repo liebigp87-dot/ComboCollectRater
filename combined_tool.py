@@ -1741,22 +1741,52 @@ def main():
                 
                 # Summary metrics
                 total_videos_found = sum(result['videos_found'] for result in progress['results'])
-                col1, col2, col3 = st.columns(3)
+                successful_exports = sum(1 for result in progress['results'] if result.get('export_status') == 'success')
+                
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Collections Completed", len(progress['results']))
                 with col2:
                     st.metric("Total Videos Found", total_videos_found)
                 with col3:
+                    st.metric("Successful Exports", successful_exports)
+                with col4:
                     avg_per_collection = total_videos_found / len(progress['results']) if progress['results'] else 0
                     st.metric("Average per Collection", f"{avg_per_collection:.1f}")
                 
-                # Individual results table
+                # Individual results table with export status
                 for result in progress['results']:
-                    col1, col2 = st.columns([3, 1])
+                    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
                     with col1:
-                        st.write(f"✅ Collection {result['collection_number']}")
+                        st.write(f"Collection {result['collection_number']}")
                     with col2:
-                        st.metric("Videos Found", result['videos_found'])
+                        st.metric("Videos", result['videos_found'])
+                    with col3:
+                        export_status = result.get('export_status', 'pending')
+                        if export_status == 'success':
+                            st.success("✅ Exported")
+                        elif export_status == 'failed':
+                            st.error("❌ Failed")
+                        elif export_status == 'exporting':
+                            st.info("📤 Exporting...")
+                        elif export_status == 'retrying':
+                            st.warning("🔄 Retrying")
+                        elif export_status == 'skipped':
+                            st.info("⏭️ Skipped")
+                        elif export_status == 'no_videos':
+                            st.info("📭 No videos")
+                        else:
+                            st.info("⏳ Pending")
+                    with col4:
+                        attempts = result.get('export_attempts', 0)
+                        if attempts > 0:
+                            st.caption(f"Attempts: {attempts}")
+                        
+                        # Show error details if available
+                        if result.get('export_error'):
+                            with st.expander("Error Details", expanded=False):
+                                st.error(f"Export Error: {result['export_error']}")
+
         
         # Batch collection processing logic
         if st.session_state.is_batch_collecting:
@@ -1793,40 +1823,31 @@ def main():
                             progress_callback=update_batch_progress
                         )
                     
-                    # Process results and export
+                    # Process results - videos are already exported per cycle
                     all_batch_videos = []
+                    failed_exports = []
+                    
                     for result in batch_results:
                         all_batch_videos.extend(result['videos'])
                         # Also add to main collected videos for display
                         st.session_state.collected_videos.extend(result['videos'])
-                    
-                    # Export if enabled and videos found
-                    if auto_export and sheets_creds and all_batch_videos:
-                        try:
-                            collector.add_log(f"Starting batch export of {len(all_batch_videos)} videos to Google Sheets", "INFO")
-                            sheet_url = exporter.export_to_sheets(all_batch_videos, spreadsheet_id=spreadsheet_id)
-                            
-                            if sheet_url:
-                                st.success("✅ Batch exported to Google Sheets!")
-                                st.markdown(f"[Open Spreadsheet]({sheet_url})")
-                                collector.add_log(f"BATCH EXPORT SUCCESS: {len(all_batch_videos)} videos exported", "SUCCESS")
-                                set_status('success', f"BATCH COMPLETED: {len(batch_results)} collections, {len(all_batch_videos)} videos exported")
-                            else:
-                                collector.add_log("BATCH EXPORT FAILED: No URL returned", "ERROR")
-                                set_status('warning', f"BATCH COMPLETED: {len(batch_results)} collections, {len(all_batch_videos)} videos found but export failed")
-                        except Exception as e:
-                            error_msg = str(e)
-                            collector.add_log(f"BATCH EXPORT ERROR: {error_msg}", "ERROR")
-                            set_status('warning', f"BATCH COMPLETED: {len(batch_results)} collections, {len(all_batch_videos)} videos found but export failed")
-                    else:
-                        total_videos = len(all_batch_videos)
-                        cycles_completed = len(batch_results)
-                        expected_cycles = batch_count
                         
-                        if cycles_completed < expected_cycles:
-                            set_status('warning', f"BATCH ENDED EARLY: {cycles_completed}/{expected_cycles} collections completed, {total_videos} videos found (quota exhausted)")
-                        else:
-                            set_status('success', f"BATCH COMPLETED: {cycles_completed} collections, {total_videos} videos found")
+                        # Track failed exports for potential retry
+                        if result.get('export_status') == 'failed':
+                            failed_exports.append(result)
+                    
+                    # Final status based on export results
+                    successful_exports = sum(1 for result in batch_results if result.get('export_status') == 'success')
+                    total_cycles = len(batch_results)
+                    total_videos = len(all_batch_videos)
+                    
+                    if failed_exports:
+                        failed_count = len(failed_exports)
+                        set_status('warning', f"BATCH COMPLETED WITH ERRORS: {total_cycles} collections, {successful_exports}/{total_cycles} successful exports, {total_videos} videos")
+                    elif total_cycles < batch_count:
+                        set_status('warning', f"BATCH ENDED EARLY: {total_cycles}/{batch_count} collections completed, {successful_exports} exports, {total_videos} videos")
+                    else:
+                        set_status('success', f"BATCH COMPLETED: {total_cycles} collections, all exports successful, {total_videos} videos")
                 
             except Exception as e:
                 set_status('error', f"BATCH FAILED: {str(e)}")
