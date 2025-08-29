@@ -114,6 +114,11 @@ if 'analysis_history' not in st.session_state:
     st.session_state.analysis_history = []
 if 'system_status' not in st.session_state:
     st.session_state.system_status = {'type': None, 'message': ''}
+# New batch collection state variables
+if 'is_batch_collecting' not in st.session_state:
+    st.session_state.is_batch_collecting = False
+if 'batch_progress' not in st.session_state:
+    st.session_state.batch_progress = {'current': 0, 'total': 0, 'results': []}
 
 
 def show_status_alert():
@@ -934,6 +939,57 @@ class YouTubeCollector:
             time.sleep(1.5)
         
         return collected
+    
+    def run_batch_collection(self, batch_count: int, target_per_collection: int = 10, 
+                            category: str = 'mixed', spreadsheet_id: str = None, 
+                            require_captions: bool = True, progress_callback=None):
+        """Run multiple collection cycles sequentially"""
+        
+        batch_results = []
+        st.session_state.batch_progress = {'current': 0, 'total': batch_count, 'results': []}
+        
+        self.add_log(f"Starting batch collection: {batch_count} cycles of {target_per_collection} videos each", "INFO")
+        
+        for i in range(batch_count):
+            if not st.session_state.is_batch_collecting:  # Check if user stopped
+                self.add_log(f"Batch collection stopped by user at cycle {i+1}/{batch_count}", "WARNING")
+                break
+                
+            # Update progress
+            st.session_state.batch_progress['current'] = i + 1
+            if progress_callback:
+                progress_callback(i + 1, batch_count)
+            
+            self.add_log(f"Starting collection cycle {i+1}/{batch_count}", "INFO")
+            
+            # Use existing collect_videos method (no changes needed!)
+            collection_videos = self.collect_videos(
+                target_count=target_per_collection,
+                category=category,
+                spreadsheet_id=spreadsheet_id,
+                require_captions=require_captions
+            )
+            
+            # Store individual collection result
+            collection_result = {
+                'collection_number': i + 1,
+                'videos_found': len(collection_videos) if collection_videos else 0,
+                'videos': collection_videos or []
+            }
+            batch_results.append(collection_result)
+            st.session_state.batch_progress['results'].append(collection_result)
+            
+            self.add_log(f"Collection cycle {i+1}/{batch_count} completed: {collection_result['videos_found']} videos found", "SUCCESS")
+            
+            # Brief pause between collections (API safety)
+            if i < batch_count - 1 and st.session_state.is_batch_collecting:  # Don't delay after last collection or if stopped
+                self.add_log("Pausing 3 seconds between collection cycles...", "INFO")
+                time.sleep(3)
+        
+        total_videos = sum(result['videos_found'] for result in batch_results)
+        self.add_log(f"Batch collection completed: {len(batch_results)} cycles, {total_videos} total videos", "SUCCESS")
+        
+        return batch_results
 
 
 class VideoRater:
@@ -1468,7 +1524,7 @@ def main():
         
         with col1:
             if st.button("Start Collection", 
-                        disabled=st.session_state.is_collecting, 
+                        disabled=st.session_state.is_collecting or st.session_state.is_batch_collecting, 
                         type="primary"):
                 clear_status()
                 
@@ -1559,15 +1615,20 @@ def main():
                 st.rerun()
         
         with col2:
-            if st.button("Stop", disabled=not st.session_state.is_collecting):
-                set_status('warning', "COLLECTION STOPPED: Process terminated by user")
-                st.session_state.is_collecting = False
+            if st.button("Stop", disabled=not st.session_state.is_collecting and not st.session_state.is_batch_collecting):
+                if st.session_state.is_collecting:
+                    set_status('warning', "COLLECTION STOPPED: Process terminated by user")
+                    st.session_state.is_collecting = False
+                elif st.session_state.is_batch_collecting:
+                    set_status('warning', f"BATCH STOPPED: Completed {st.session_state.batch_progress['current']}/{st.session_state.batch_progress['total']} collections")
+                    st.session_state.is_batch_collecting = False
                 st.rerun()
         
         with col3:
             if st.button("Reset Stats & Videos"):
                 st.session_state.collected_videos = []
                 st.session_state.collector_stats = {'checked': 0, 'found': 0, 'rejected': 0, 'api_calls': 0, 'has_captions': 0, 'no_captions': 0}
+                st.session_state.batch_progress = {'current': 0, 'total': 0, 'results': []}
                 st.session_state.logs = []  # Also clear logs
                 clear_status()
                 st.rerun()
@@ -1590,6 +1651,166 @@ def main():
                             st.error("Export failed - no URL returned")
                     except Exception as e:
                         st.error(f"Export failed: {str(e)}")
+        
+        # Batch Collection Mode Section
+        st.divider()
+        st.subheader("🔄 Batch Collection Mode")
+        st.caption("Run multiple collection cycles automatically")
+        
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            batch_count = st.number_input(
+                "Number of Collections",
+                min_value=1,
+                max_value=50,
+                value=5,
+                help="How many collection cycles to run sequentially",
+                disabled=st.session_state.is_collecting or st.session_state.is_batch_collecting
+            )
+        
+        with col2:
+            batch_target_per_collection = st.number_input(
+                "Videos per Collection",
+                min_value=1,
+                max_value=100,
+                value=target_count,
+                help="Target videos for each collection cycle",
+                disabled=st.session_state.is_collecting or st.session_state.is_batch_collecting
+            )
+        
+        # Batch Collection Controls
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            if st.button("🚀 Start Batch Collection", 
+                        disabled=st.session_state.is_collecting or st.session_state.is_batch_collecting or not youtube_api_key,
+                        type="primary"):
+                clear_status()
+                
+                if not sheets_creds and auto_export:
+                    set_status('error', "BATCH ABORTED: Google Sheets credentials required for auto-export")
+                else:
+                    st.session_state.is_batch_collecting = True
+                    set_status('info', f"BATCH STARTED: Running {batch_count} collections of {batch_target_per_collection} videos each")
+                st.rerun()
+        
+        with col2:
+            if st.button("⏹️ Stop Batch", 
+                        disabled=not st.session_state.is_batch_collecting):
+                st.session_state.is_batch_collecting = False
+                current = st.session_state.batch_progress.get('current', 0)
+                total = st.session_state.batch_progress.get('total', 0)
+                set_status('warning', f"BATCH STOPPED: Completed {current}/{total} collections")
+                st.rerun()
+        
+        with col3:
+            if st.button("🔄 Reset Batch"):
+                st.session_state.batch_progress = {'current': 0, 'total': 0, 'results': []}
+                clear_status()
+                st.rerun()
+        
+        # Show batch progress
+        if st.session_state.is_batch_collecting or st.session_state.batch_progress['current'] > 0:
+            progress = st.session_state.batch_progress
+            
+            # Progress bar
+            if progress['total'] > 0:
+                progress_pct = progress['current'] / progress['total']
+                st.progress(progress_pct, f"Collection {progress['current']}/{progress['total']}")
+            
+            # Individual collection results
+            if progress['results']:
+                st.subheader("📊 Batch Collection Results")
+                
+                # Summary metrics
+                total_videos_found = sum(result['videos_found'] for result in progress['results'])
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Collections Completed", len(progress['results']))
+                with col2:
+                    st.metric("Total Videos Found", total_videos_found)
+                with col3:
+                    avg_per_collection = total_videos_found / len(progress['results']) if progress['results'] else 0
+                    st.metric("Average per Collection", f"{avg_per_collection:.1f}")
+                
+                # Individual results table
+                for result in progress['results']:
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"✅ Collection {result['collection_number']}")
+                    with col2:
+                        st.metric("Videos Found", result['videos_found'])
+        
+        # Batch collection processing logic
+        if st.session_state.is_batch_collecting:
+            try:
+                # Create exporter if needed
+                exporter = None
+                if sheets_creds:
+                    exporter = GoogleSheetsExporter(sheets_creds)
+                
+                # Create collector
+                collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
+                
+                # Quota check
+                quota_available = True
+                if not skip_quota_check:
+                    quota_available, quota_message = collector.check_quota_available()
+                    if not quota_available:
+                        set_status('error', f"BATCH ABORTED: {quota_message}")
+                        st.session_state.is_batch_collecting = False
+                        st.rerun()
+                
+                # Run batch collection
+                if quota_available:
+                    def update_batch_progress(current, total):
+                        st.empty().markdown(f"⚡ **Running collection {current}/{total}...**")
+                    
+                    with st.spinner(f"Running batch collection: {batch_count} cycles..."):
+                        batch_results = collector.run_batch_collection(
+                            batch_count=batch_count,
+                            target_per_collection=batch_target_per_collection,
+                            category=category,
+                            spreadsheet_id=spreadsheet_id,
+                            require_captions=require_captions,
+                            progress_callback=update_batch_progress
+                        )
+                    
+                    # Process results and export
+                    all_batch_videos = []
+                    for result in batch_results:
+                        all_batch_videos.extend(result['videos'])
+                        # Also add to main collected videos for display
+                        st.session_state.collected_videos.extend(result['videos'])
+                    
+                    # Export if enabled and videos found
+                    if auto_export and sheets_creds and all_batch_videos:
+                        try:
+                            collector.add_log(f"Starting batch export of {len(all_batch_videos)} videos to Google Sheets", "INFO")
+                            sheet_url = exporter.export_to_sheets(all_batch_videos, spreadsheet_id=spreadsheet_id)
+                            
+                            if sheet_url:
+                                st.success("✅ Batch exported to Google Sheets!")
+                                st.markdown(f"[Open Spreadsheet]({sheet_url})")
+                                collector.add_log(f"BATCH EXPORT SUCCESS: {len(all_batch_videos)} videos exported", "SUCCESS")
+                                set_status('success', f"BATCH COMPLETED: {len(batch_results)} collections, {len(all_batch_videos)} videos exported")
+                            else:
+                                collector.add_log("BATCH EXPORT FAILED: No URL returned", "ERROR")
+                                set_status('warning', f"BATCH COMPLETED: {len(batch_results)} collections, {len(all_batch_videos)} videos found but export failed")
+                        except Exception as e:
+                            error_msg = str(e)
+                            collector.add_log(f"BATCH EXPORT ERROR: {error_msg}", "ERROR")
+                            set_status('warning', f"BATCH COMPLETED: {len(batch_results)} collections, {len(all_batch_videos)} videos found but export failed")
+                    else:
+                        total_videos = len(all_batch_videos)
+                        set_status('success', f"BATCH COMPLETED: {len(batch_results)} collections, {total_videos} videos found")
+                
+            except Exception as e:
+                set_status('error', f"BATCH FAILED: {str(e)}")
+                collector.add_log(f"Batch collection error: {str(e)}", "ERROR")
+            finally:
+                st.session_state.is_batch_collecting = False
+                st.rerun()
         
         # Display collected videos
         if st.session_state.collected_videos:
