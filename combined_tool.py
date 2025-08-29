@@ -906,19 +906,14 @@ class YouTubeCollector:
         
         return collected
     
-    def check_auto_collection_ready(self):
-        """Check if enough time has passed for next auto-collection"""
-        current_time = time.time()
-        time_since_last = current_time - st.session_state.auto_mode_last_collection_time
-        return time_since_last >= 10  # 10 seconds between collections
-    
-    def run_auto_collection(self, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True, category: str = 'mixed'):
-        """Run single auto-collection cycle"""
-        collection_number = st.session_state.auto_mode_stats.get('collections_completed', 0) + 1
+    def run_auto_collection_on_count(self, count: int, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True, category: str = 'mixed'):
+        """Run auto-collection based on refresh counter"""
+        # Calculate which collection number this should be (every 4 refreshes = ~20 seconds with 5s interval)
+        collection_number = (count // 4) + 1
         
         try:
-            self.add_log(f"AUTO MODE: Starting collection cycle #{collection_number} (category: {category})", "INFO")
-            set_status('info', f"AUTO MODE: Running collection #{collection_number}...")
+            self.add_log(f"AUTO MODE: Starting collection cycle #{collection_number} (category: {category}) at refresh #{count}", "INFO")
+            set_status('info', f"AUTO MODE: Running collection #{collection_number}... (Refresh #{count})")
             
             # Check quota before collection
             quota_available, quota_message = self.check_quota_available()
@@ -942,24 +937,18 @@ class YouTubeCollector:
                 sheet_url = sheets_exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
                 if sheet_url:
                     st.session_state.auto_mode_stats['collections_completed'] = collection_number
-                    st.session_state.auto_mode_last_collection_time = time.time()
                     self.add_log(f"AUTO MODE: Collection #{collection_number} completed - {len(videos)} videos exported", "SUCCESS")
                     
                     # Check quota after collection
                     quota_still_available, _ = self.check_quota_available()
-                    if quota_still_available and st.session_state.auto_mode_running:
-                        set_status('success', f"AUTO MODE: Collection #{collection_number} completed - next run in 10 seconds...")
-                        self.add_log("AUTO MODE: Collection completed, waiting for next cycle", "INFO")
-                        return True  # Continue auto-mode
-                    else:
-                        if not quota_still_available:
-                            self.add_log("AUTO MODE: Quota exhausted after collection", "WARNING")
-                            set_status('warning', f"AUTO MODE STOPPED: Quota exhausted after {collection_number} collections")
-                        else:
-                            self.add_log("AUTO MODE: Stopped by user", "INFO")
-                            set_status('info', f"AUTO MODE STOPPED: User interrupted after {collection_number} collections")
+                    if not quota_still_available:
+                        self.add_log("AUTO MODE: Quota exhausted after collection", "WARNING")
+                        set_status('warning', f"AUTO MODE STOPPED: Quota exhausted after {collection_number} collections")
                         st.session_state.auto_mode_running = False
                         return False
+                    else:
+                        set_status('success', f"AUTO MODE: Collection #{collection_number} completed - next run in ~20 seconds...")
+                        return True
                 else:
                     self.add_log(f"AUTO MODE: Collection #{collection_number} export failed", "ERROR")
                     set_status('error', f"AUTO MODE: Collection #{collection_number} export failed - stopping")
@@ -967,13 +956,8 @@ class YouTubeCollector:
                     return False
             else:
                 self.add_log(f"AUTO MODE: Collection #{collection_number} found no videos", "INFO")
-                if st.session_state.auto_mode_running:
-                    st.session_state.auto_mode_last_collection_time = time.time()
-                    set_status('info', f"AUTO MODE: Collection #{collection_number} found no videos - trying again in 10 seconds...")
-                    return True
-                else:
-                    st.session_state.auto_mode_running = False
-                    return False
+                set_status('info', f"AUTO MODE: Collection #{collection_number} found no videos - will try again...")
+                return True
                 
         except Exception as e:
             self.add_log(f"AUTO MODE ERROR in collection #{collection_number}: {str(e)}", "ERROR")
@@ -1463,8 +1447,70 @@ def main():
         if sheets_creds and 'client_email' in sheets_creds:
             st.info(f"Service Account: {sheets_creds['client_email'][:30]}...")
     
+    # Auto-refresh for auto-mode (following streamlit-autorefresh example pattern)
+    auto_refresh_count = 0
+    if st.session_state.auto_mode_running and AUTOREFRESH_AVAILABLE:
+        # Call st_autorefresh at top level when auto-mode is running
+        auto_refresh_count = st_autorefresh(interval=5000, key="auto_mode_refresh")
+    
     # Main content based on selected mode
     if mode == "Data Collector":
+        st.subheader("Data Collector")
+        
+        # Show status alerts prominently
+        show_status_alert()
+        
+        # Auto-mode logic based on refresh counter (following example pattern)
+        if (st.session_state.auto_mode_running and 
+            AUTOREFRESH_AVAILABLE and 
+            auto_refresh_count > 0 and
+            not st.session_state.is_collecting and
+            youtube_api_key and sheets_creds and spreadsheet_id):
+            
+            # Debug info in sidebar
+            with st.sidebar:
+                st.success(f"🔄 Auto-refresh active! Count: {auto_refresh_count}")
+                st.write(f"🕐 Last refresh: {datetime.now().strftime('%H:%M:%S')}")
+            
+            # Run collection every 4 refreshes (4 * 5 seconds = 20 seconds between collections)
+            if auto_refresh_count % 4 == 0:
+                try:
+                    exporter = GoogleSheetsExporter(sheets_creds)
+                    collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
+                    
+                    # Run collection based on refresh count
+                    collector.run_auto_collection_on_count(auto_refresh_count, youtube_api_key, exporter, spreadsheet_id, require_captions, category)
+                    
+                except Exception as e:
+                    set_status('error', f"AUTO MODE CRITICAL ERROR: {str(e)}")
+                    st.session_state.auto_mode_running = False
+            else:
+                # Show countdown until next collection
+                refreshes_until_next = 4 - (auto_refresh_count % 4)
+                seconds_until_next = refreshes_until_next * 5
+                next_collection = (auto_refresh_count // 4) + 1
+                set_status('info', f"AUTO MODE: Next collection #{next_collection} in ~{seconds_until_next} seconds... (Refresh #{auto_refresh_count})")
+        
+        # Debug panel in sidebar when auto-mode is enabled
+        if st.session_state.auto_mode_enabled:
+            with st.sidebar:
+                st.write("**🔧 Auto-Mode Debug:**")
+                st.write(f"• Auto-refresh available: {AUTOREFRESH_AVAILABLE}")
+                st.write(f"• Auto-mode running: {st.session_state.auto_mode_running}")
+                st.write(f"• Refresh count: {auto_refresh_count}")
+                st.write(f"• Is collecting: {st.session_state.is_collecting}")
+                st.write(f"• Has API key: {bool(youtube_api_key)}")
+                st.write(f"• Has sheets creds: {bool(sheets_creds)}")
+                st.write(f"• Has spreadsheet ID: {bool(spreadsheet_id)}")
+                
+                if auto_refresh_count > 0:
+                    next_collection_refresh = ((auto_refresh_count // 4) + 1) * 4
+                    st.write(f"• Next collection at refresh: {next_collection_refresh}")
+        
+        # Show error if auto-mode running but auto-refresh not available
+        if st.session_state.auto_mode_running and not AUTOREFRESH_AVAILABLE:
+            st.error("🚫 Auto-mode requires streamlit-autorefresh package")
+            st.session_state.auto_mode_running = False
         st.subheader("Data Collector")
         
         # Show status alerts prominently
@@ -1542,8 +1588,7 @@ def main():
                                     type="primary"):
                             st.session_state.auto_mode_running = True
                             st.session_state.auto_mode_stats = {'collections_completed': 0}
-                            st.session_state.auto_mode_last_collection_time = 0  # Start immediately
-                            set_status('info', "AUTO MODE STARTED: Beginning continuous collection...")
+                            set_status('info', "AUTO MODE STARTED: Auto-refresh will begin shortly...")
                             st.rerun()
                     
                     with col2:
