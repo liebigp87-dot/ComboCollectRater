@@ -906,8 +906,15 @@ class YouTubeCollector:
         
         return collected
     
-    def run_auto_collection(self, count: int, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True, category: str = 'mixed'):
+    def run_auto_collection(self, count, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True, category: str = 'mixed'):
         """Run auto-collection based on refresh counter"""
+        # Ensure count is an integer
+        try:
+            count = int(count)
+        except (ValueError, TypeError):
+            self.add_log(f"AUTO MODE ERROR: Invalid count value: {count} (type: {type(count)})", "ERROR")
+            return False
+        
         # Calculate which collection number this should be (every 4 refreshes = ~20 seconds with 5s interval)
         collection_number = (count // 4) + 1
         
@@ -1473,7 +1480,7 @@ def main():
                 st.write(f"🕐 Last refresh: {datetime.now().strftime('%H:%M:%S')}")
             
             # Run collection every 4 refreshes (4 * 5 seconds = 20 seconds between collections)
-            if auto_refresh_count % 4 == 0:
+            if int(auto_refresh_count) % 4 == 0:
                 try:
                     exporter = GoogleSheetsExporter(sheets_creds)
                     collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
@@ -1486,10 +1493,33 @@ def main():
                     st.session_state.auto_mode_running = False
             else:
                 # Show countdown until next collection
-                refreshes_until_next = 4 - (auto_refresh_count % 4)
+                refreshes_until_next = 4 - (int(auto_refresh_count) % 4)
                 seconds_until_next = refreshes_until_next * 5
-                next_collection = (auto_refresh_count // 4) + 1
-                set_status('info', f"AUTO MODE: Next collection #{next_collection} in ~{seconds_until_next} seconds... (Refresh #{auto_refresh_count})")
+                next_collection = (int(auto_refresh_count) // 4) + 1
+                
+                # Visual countdown timer
+                with st.sidebar:
+                    st.markdown("### ⏱️ Countdown Timer")
+                    progress_value = 1 - (refreshes_until_next / 4)  # Progress from 0 to 1
+                    st.progress(progress_value, f"Next collection in {seconds_until_next}s")
+                    
+                    # Visual countdown bar
+                    st.markdown(f"""
+                    <div style="
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                        padding: 1rem;
+                        border-radius: 10px;
+                        text-align: center;
+                        margin: 1rem 0;
+                    ">
+                        <h3>⏰ Next Collection #{next_collection}</h3>
+                        <h1 style="font-size: 2.5rem; margin: 0;">{seconds_until_next}s</h1>
+                        <p>Refresh #{auto_refresh_count}/4 cycle</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                set_status('info', f"AUTO MODE: Next collection #{next_collection} in {seconds_until_next} seconds... (Refresh #{auto_refresh_count})")
         
         # Debug panel in sidebar when auto-mode is enabled
         if st.session_state.auto_mode_enabled:
@@ -1504,7 +1534,7 @@ def main():
                 st.write(f"• Has spreadsheet ID: {bool(spreadsheet_id)}")
                 
                 if auto_refresh_count > 0:
-                    next_collection_refresh = ((auto_refresh_count // 4) + 1) * 4
+                    next_collection_refresh = ((int(auto_refresh_count) // 4) + 1) * 4
                     st.write(f"• Next collection at refresh: {next_collection_refresh}")
         
         # Show error if auto-mode running but auto-refresh not available
