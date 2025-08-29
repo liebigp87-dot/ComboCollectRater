@@ -897,7 +897,7 @@ class YouTubeCollector:
         
         return collected
     
-    def run_auto_collection_cycle(self, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True, category: str = 'mixed'):
+    def run_auto_collection(self, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True, category: str = 'mixed'):
         """Run continuous auto-collection until quota exhausted or user stops"""
         current_time = time.time()
         
