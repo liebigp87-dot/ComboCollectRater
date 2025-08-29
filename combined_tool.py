@@ -114,10 +114,7 @@ if 'analysis_history' not in st.session_state:
     st.session_state.analysis_history = []
 if 'system_status' not in st.session_state:
     st.session_state.system_status = {'type': None, 'message': ''}
-if 'target_mode_enabled' not in st.session_state:
-    st.session_state.target_mode_enabled = False
-if 'target_videos' not in st.session_state:
-    st.session_state.target_videos = 10
+
 
 def show_status_alert():
     """Display system status alerts prominently"""
@@ -1563,39 +1560,6 @@ def main():
         # Show status alerts prominently
         show_status_alert()
         
-        # Target Mode Configuration
-        with st.sidebar:
-            st.subheader("Target Mode")
-            
-            target_mode_enabled = st.checkbox(
-                "Enable Target Mode",
-                value=st.session_state.target_mode_enabled,
-                help="Process videos until reaching target number of tobe_links"
-            )
-            
-            if target_mode_enabled != st.session_state.target_mode_enabled:
-                st.session_state.target_mode_enabled = target_mode_enabled
-                if not target_mode_enabled:
-                    st.session_state.target_progress = 0
-                st.rerun()
-            
-            if st.session_state.target_mode_enabled:
-                target_videos = st.number_input(
-                    "Target Videos for tobe_links",
-                    min_value=1,
-                    max_value=100,
-                    value=st.session_state.target_videos
-                )
-                
-                if target_videos != st.session_state.target_videos:
-                    st.session_state.target_videos = target_videos
-                    st.session_state.target_progress = 0
-                
-                # Show target progress
-                if st.session_state.target_progress > 0:
-                    progress_pct = min(st.session_state.target_progress / st.session_state.target_videos, 1.0)
-                    st.progress(progress_pct, f"Progress: {st.session_state.target_progress}/{st.session_state.target_videos}")
-        
         # Statistics display
         col1, col2, col3 = st.columns(3)
         
@@ -1615,20 +1579,13 @@ def main():
             with col1:
                 if st.button("Start Rating", disabled=st.session_state.is_rating, type="primary"):
                     clear_status()
-                    if st.session_state.target_mode_enabled:
-                        set_status('info', f"TARGET MODE STARTED: Processing until {st.session_state.target_videos} videos reach tobe_links")
-                        st.session_state.target_progress = 0
-                    else:
-                        set_status('info', "RATING STARTED: Processing videos from raw_links")
+                    set_status('info', "RATING STARTED: Processing videos from raw_links continuously")
                     st.session_state.is_rating = True
                     st.rerun()
             
             with col2:
                 if st.button("Stop Rating", disabled=not st.session_state.is_rating):
-                    if st.session_state.target_mode_enabled:
-                        set_status('warning', f"TARGET MODE STOPPED: {st.session_state.target_progress}/{st.session_state.target_videos} completed before stopping")
-                    else:
-                        set_status('warning', "RATING STOPPED: Process terminated by user")
+                    set_status('warning', "RATING STOPPED: Process terminated by user")
                     st.session_state.is_rating = False
                     st.rerun()
             
@@ -1639,21 +1596,11 @@ def main():
                     
                     # Continuous rating loop
                     while st.session_state.is_rating:
-                        # Check if target reached in target mode
-                        if st.session_state.target_mode_enabled and st.session_state.target_progress >= st.session_state.target_videos:
-                            set_status('success', f"TARGET REACHED: {st.session_state.target_progress} videos successfully moved to tobe_links")
-                            st.session_state.is_rating = False
-                            st.rerun()
-                            break
-                        
                         # Check quota before each video
                         quota_available, quota_message = rater.check_quota_available()
                         
                         if not quota_available:
-                            if st.session_state.target_mode_enabled:
-                                set_status('error', f"TARGET MODE ABORTED: {quota_message} - {st.session_state.target_progress}/{st.session_state.target_videos} completed")
-                            else:
-                                set_status('error', f"RATING ABORTED: {quota_message}")
+                            set_status('error', f"RATING STOPPED: {quota_message}")
                             st.session_state.is_rating = False
                             st.rerun()
                             break
@@ -1677,13 +1624,7 @@ def main():
                             except:
                                 completion_msg = "RATING COMPLETED: Could not access raw_links sheet"
                             
-                            if st.session_state.target_mode_enabled:
-                                if st.session_state.target_progress >= st.session_state.target_videos:
-                                    set_status('success', f"TARGET REACHED: {st.session_state.target_progress} videos moved to tobe_links")
-                                else:
-                                    set_status('warning', f"TARGET NOT REACHED: {st.session_state.target_progress}/{st.session_state.target_videos} - {completion_msg}")
-                            else:
-                                set_status('info', completion_msg)
+                            set_status('info', completion_msg)
                             st.session_state.is_rating = False
                             st.rerun()
                             break
@@ -1770,12 +1711,7 @@ def main():
                                         
                                         st.session_state.rater_stats['moved_to_tobe'] += 1
                                         
-                                        # Update target progress if in target mode
-                                        if st.session_state.target_mode_enabled:
-                                            st.session_state.target_progress += 1
-                                            st.success(f"✅ Score: {score:.1f}/10 - Moved to tobe_links! ({st.session_state.target_progress}/{st.session_state.target_videos})")
-                                        else:
-                                            st.success(f"✅ Score: {score:.1f}/10 - Moved to tobe_links!")
+                                        st.success(f"✅ Score: {score:.1f}/10 - Moved to tobe_links!")
                                         
                                         rater.add_log(f"Video {next_video.get('title', '')[:50]} scored {score:.1f} - moved to tobe_links and time_comments", "SUCCESS")
                                     else:
