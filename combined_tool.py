@@ -1986,7 +1986,7 @@ def main():
                         
                         # Small delay and rerun to continue the loop
                         if st.session_state.is_rating:  # Check if still rating
-                            time.sleep(0.5)
+                            time.sleep(1)
                             st.rerun()
                 
                 except Exception as e:
