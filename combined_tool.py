@@ -870,7 +870,7 @@ class YouTubeCollector:
         
         return collected
     
-    def run_auto_collection(self, api_key: str, sheets_exporter, spreadsheet_id: str):
+    def run_auto_collection(self, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True):
         """Run auto collection cycle - simplified for reliability"""
         current_time = time.time()
         
@@ -895,7 +895,7 @@ class YouTubeCollector:
                     target_count=10,
                     category='mixed',
                     spreadsheet_id=spreadsheet_id,
-                    require_captions=True,
+                    require_captions=require_captions,
                     progress_callback=None
                 )
                 
@@ -1616,7 +1616,7 @@ def main():
                 collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
                 
                 # Run auto collection check
-                continue_auto = collector.run_auto_collection(youtube_api_key, exporter, spreadsheet_id)
+                continue_auto = collector.run_auto_collection(youtube_api_key, exporter, spreadsheet_id, require_captions)
                 
                 if not continue_auto:
                     st.session_state.auto_mode_running = False
