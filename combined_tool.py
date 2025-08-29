@@ -18,7 +18,13 @@ from PIL import Image
 import io
 import xml.etree.ElementTree as ET
 from urllib.parse import unquote
-from streamlit_autorefresh import st_autorefresh
+try:
+    from streamlit_autorefresh import st_autorefresh
+    AUTOREFRESH_AVAILABLE = True
+except ImportError:
+    AUTOREFRESH_AVAILABLE = False
+    st.error("⚠️ streamlit-autorefresh not available - auto-mode will not work properly")
+    st.info("Please check that 'streamlit-autorefresh' is in your requirements.txt file")
 
 try:
     from googleapiclient.discovery import build
@@ -1986,7 +1992,7 @@ def main():
                         
                         # Small delay and rerun to continue the loop
                         if st.session_state.is_rating:  # Check if still rating
-                            time.sleep(1)
+                            time.sleep(0.5)
                             st.rerun()
                 
                 except Exception as e:
