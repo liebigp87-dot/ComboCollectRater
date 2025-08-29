@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Combined YouTube Data Collector & Video Rating Tool
 Collects YouTube videos and rates them for content suitability
@@ -113,18 +114,10 @@ if 'analysis_history' not in st.session_state:
     st.session_state.analysis_history = []
 if 'system_status' not in st.session_state:
     st.session_state.system_status = {'type': None, 'message': ''}
-if 'auto_mode_enabled' not in st.session_state:
-    st.session_state.auto_mode_enabled = False
-if 'auto_mode_running' not in st.session_state:
-    st.session_state.auto_mode_running = False
-if 'auto_mode_stats' not in st.session_state:
-    st.session_state.auto_mode_stats = {'collections_completed': 0, 'last_check': 0, 'next_check': 0}
 if 'target_mode_enabled' not in st.session_state:
     st.session_state.target_mode_enabled = False
 if 'target_videos' not in st.session_state:
     st.session_state.target_videos = 10
-if 'auto_mode_next_run_time' not in st.session_state:
-    st.session_state.auto_mode_next_run_time = 0
 
 def show_status_alert():
     """Display system status alerts prominently"""
@@ -896,90 +889,6 @@ class YouTubeCollector:
             time.sleep(1.5)
         
         return collected
-    
-    def run_auto_collection(self, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True, category: str = 'mixed'):
-        """Run continuous auto-collection with short blocking sleeps and forced refreshes"""
-        collection_number = st.session_state.auto_mode_stats.get('collections_completed', 0) + 1
-        
-        try:
-            self.add_log(f"AUTO MODE: Starting collection cycle #{collection_number} (category: {category})", "INFO")
-            set_status('info', f"AUTO MODE: Running collection #{collection_number}...")
-            
-            # Check quota before collection
-            quota_available, quota_message = self.check_quota_available()
-            if not quota_available:
-                self.add_log(f"AUTO MODE: Quota exhausted - {quota_message}", "WARNING")
-                set_status('warning', f"AUTO MODE STOPPED: {quota_message}")
-                st.session_state.auto_mode_running = False
-                return False
-            
-            # Run collection (hardcoded to 10 videos)
-            videos = self.collect_videos(
-                target_count=10,
-                category=category,
-                spreadsheet_id=spreadsheet_id,
-                require_captions=require_captions,
-                progress_callback=None
-            )
-            
-            if videos and len(videos) > 0:
-                # Export to sheets
-                sheet_url = sheets_exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
-                if sheet_url:
-                    st.session_state.auto_mode_stats['collections_completed'] = collection_number
-                    self.add_log(f"AUTO MODE: Collection #{collection_number} completed - {len(videos)} videos exported", "SUCCESS")
-                    
-                    # Check quota after collection
-                    quota_still_available, _ = self.check_quota_available()
-                    if quota_still_available and st.session_state.auto_mode_running:
-                        # Show success message and prepare for next run
-                        set_status('success', f"AUTO MODE: Collection #{collection_number} completed - preparing next run...")
-                        self.add_log("AUTO MODE: Starting 10-second delay before next collection", "INFO")
-                        
-                        # Short blocking sleep with progress updates
-                        for i in range(10, 0, -1):
-                            if not st.session_state.auto_mode_running:  # Check if user stopped
-                                self.add_log("AUTO MODE: Stopped by user during delay", "INFO")
-                                return False
-                            set_status('info', f"AUTO MODE: Next collection in {i} seconds... (Collection #{collection_number + 1})")
-                            time.sleep(1)  # 1-second increments
-                        
-                        self.add_log("AUTO MODE: Delay completed, continuing to next collection", "INFO")
-                        return True  # Continue auto-mode
-                    else:
-                        if not quota_still_available:
-                            self.add_log("AUTO MODE: Quota exhausted after collection", "WARNING")
-                            set_status('warning', f"AUTO MODE STOPPED: Quota exhausted after {collection_number} collections")
-                        else:
-                            self.add_log("AUTO MODE: Stopped by user", "INFO")
-                            set_status('info', f"AUTO MODE STOPPED: User interrupted after {collection_number} collections")
-                        st.session_state.auto_mode_running = False
-                        return False
-                else:
-                    self.add_log(f"AUTO MODE: Collection #{collection_number} export failed", "ERROR")
-                    set_status('error', f"AUTO MODE: Collection #{collection_number} export failed - stopping")
-                    st.session_state.auto_mode_running = False
-                    return False
-            else:
-                self.add_log(f"AUTO MODE: Collection #{collection_number} found no videos", "INFO")
-                if st.session_state.auto_mode_running:
-                    # Shorter delay if no videos found
-                    set_status('info', f"AUTO MODE: Collection #{collection_number} found no videos - trying again in 5 seconds...")
-                    for i in range(5, 0, -1):
-                        if not st.session_state.auto_mode_running:
-                            return False
-                        set_status('info', f"AUTO MODE: No videos found - retrying in {i} seconds...")
-                        time.sleep(1)
-                    return True
-                else:
-                    st.session_state.auto_mode_running = False
-                    return False
-                
-        except Exception as e:
-            self.add_log(f"AUTO MODE ERROR in collection #{collection_number}: {str(e)}", "ERROR")
-            set_status('error', f"AUTO MODE ERROR: {str(e)}")
-            st.session_state.auto_mode_running = False
-            return False
 
 
 class VideoRater:
@@ -1498,63 +1407,6 @@ def main():
                 "Require captions",
                 value=True
             )
-            
-            st.divider()
-            
-            # Auto Mode section
-            st.subheader("🤖 Auto Mode")
-            
-            auto_mode_enabled = st.checkbox(
-                "Enable Auto Mode",
-                value=st.session_state.auto_mode_enabled,
-                disabled=st.session_state.auto_mode_running or st.session_state.is_collecting,
-                help="Automatically collect videos every hour (mixed category, 10 videos)"
-            )
-            
-            if auto_mode_enabled != st.session_state.auto_mode_enabled:
-                st.session_state.auto_mode_enabled = auto_mode_enabled
-                if not auto_mode_enabled:
-                    st.session_state.auto_mode_running = False
-                st.rerun()
-            
-            if st.session_state.auto_mode_enabled:
-                # Auto mode status
-                if st.session_state.auto_mode_running:
-                    next_check_time = st.session_state.auto_mode_stats.get('next_check', 0)
-                    if next_check_time > 0:
-                        remaining_minutes = max(0, int((next_check_time - time.time()) / 60))
-                        st.info(f"⏰ Next check: {remaining_minutes} minutes")
-                    
-                    collections = st.session_state.auto_mode_stats.get('collections_completed', 0)
-                    st.info(f"📊 Collections completed: {collections}")
-                    
-                    if st.button("⏹️ Stop Auto Mode", type="secondary"):
-                        st.session_state.auto_mode_running = False
-                        set_status('warning', "AUTO MODE STOPPED: Process terminated by user")
-                        st.rerun()
-                else:
-                    # Auto mode controls
-                    col1, col2 = st.columns([2, 1])
-                    
-                    with col1:
-                        if st.button("▶️ Start Auto Mode", 
-                                    disabled=not youtube_api_key or not sheets_creds or not spreadsheet_id,
-                                    type="primary"):
-                            st.session_state.auto_mode_running = True
-                            st.session_state.auto_mode_stats = {'collections_completed': 0}
-                            set_status('info', "AUTO MODE STARTED: Beginning continuous collection...")
-                            st.rerun()
-                    
-                    with col2:
-                        # Reset button when not running
-                        if st.button("🔄", help="Reset Auto Mode Stats", type="secondary"):
-                            st.session_state.auto_mode_running = False
-                            st.session_state.auto_mode_enabled = False
-                            st.session_state.auto_mode_stats = {'collections_completed': 0}
-                            st.session_state.is_collecting = False
-                            clear_status()
-                            st.success("Auto mode reset")
-                            st.rerun()
         
         # Statistics display
         col1, col2, col3 = st.columns(3)
@@ -1571,7 +1423,7 @@ def main():
         
         with col1:
             if st.button("Start Collection", 
-                        disabled=st.session_state.is_collecting or st.session_state.auto_mode_running, 
+                        disabled=st.session_state.is_collecting, 
                         type="primary"):
                 clear_status()
                 
@@ -1580,8 +1432,6 @@ def main():
                 elif not sheets_creds and auto_export:
                     set_status('error', "COLLECTION ABORTED: Google Sheets credentials required for auto-export")
                 else:
-                    # Don't reset stats - preserve across sessions
-                    # st.session_state.collector_stats = {'checked': 0, 'found': 0, 'rejected': 0, 'api_calls': 0, 'has_captions': 0, 'no_captions': 0}
                     st.session_state.is_collecting = True
                     
                     videos = []  # Initialize to avoid None issues
@@ -1661,28 +1511,6 @@ def main():
                     finally:
                         st.session_state.is_collecting = False
                 
-                st.rerun()
-        
-        # Auto mode monitoring - simplified and non-blocking
-        if (st.session_state.auto_mode_running and 
-            not st.session_state.is_collecting and 
-            st.session_state.auto_mode_enabled and
-            youtube_api_key and sheets_creds and spreadsheet_id):
-            
-            try:
-                exporter = GoogleSheetsExporter(sheets_creds)
-                collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
-                
-                # Run auto collection check
-                continue_auto = collector.run_auto_collection(youtube_api_key, exporter, spreadsheet_id, require_captions, category)
-                
-                if not continue_auto:
-                    st.session_state.auto_mode_running = False
-                    st.rerun()  # Force UI refresh after auto-mode run
-                    
-            except Exception as e:
-                set_status('error', f"AUTO MODE ERROR: {str(e)}")
-                st.session_state.auto_mode_running = False
                 st.rerun()
         
         with col2:
