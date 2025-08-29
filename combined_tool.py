@@ -18,6 +18,7 @@ from PIL import Image
 import io
 import xml.etree.ElementTree as ET
 from urllib.parse import unquote
+from streamlit_autorefresh import st_autorefresh
 
 try:
     from googleapiclient.discovery import build
@@ -125,6 +126,8 @@ if 'target_videos' not in st.session_state:
     st.session_state.target_videos = 10
 if 'auto_mode_next_run_time' not in st.session_state:
     st.session_state.auto_mode_next_run_time = 0
+if 'auto_mode_last_collection_time' not in st.session_state:
+    st.session_state.auto_mode_last_collection_time = 0
 
 def show_status_alert():
     """Display system status alerts prominently"""
@@ -897,8 +900,14 @@ class YouTubeCollector:
         
         return collected
     
+    def check_auto_collection_ready(self):
+        """Check if enough time has passed for next auto-collection"""
+        current_time = time.time()
+        time_since_last = current_time - st.session_state.auto_mode_last_collection_time
+        return time_since_last >= 10  # 10 seconds between collections
+    
     def run_auto_collection(self, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True, category: str = 'mixed'):
-        """Run continuous auto-collection with short blocking sleeps and forced refreshes"""
+        """Run single auto-collection cycle"""
         collection_number = st.session_state.auto_mode_stats.get('collections_completed', 0) + 1
         
         try:
@@ -927,24 +936,14 @@ class YouTubeCollector:
                 sheet_url = sheets_exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
                 if sheet_url:
                     st.session_state.auto_mode_stats['collections_completed'] = collection_number
+                    st.session_state.auto_mode_last_collection_time = time.time()
                     self.add_log(f"AUTO MODE: Collection #{collection_number} completed - {len(videos)} videos exported", "SUCCESS")
                     
                     # Check quota after collection
                     quota_still_available, _ = self.check_quota_available()
                     if quota_still_available and st.session_state.auto_mode_running:
-                        # Show success message and prepare for next run
-                        set_status('success', f"AUTO MODE: Collection #{collection_number} completed - preparing next run...")
-                        self.add_log("AUTO MODE: Starting 10-second delay before next collection", "INFO")
-                        
-                        # Short blocking sleep with progress updates
-                        for i in range(10, 0, -1):
-                            if not st.session_state.auto_mode_running:  # Check if user stopped
-                                self.add_log("AUTO MODE: Stopped by user during delay", "INFO")
-                                return False
-                            set_status('info', f"AUTO MODE: Next collection in {i} seconds... (Collection #{collection_number + 1})")
-                            time.sleep(1)  # 1-second increments
-                        
-                        self.add_log("AUTO MODE: Delay completed, continuing to next collection", "INFO")
+                        set_status('success', f"AUTO MODE: Collection #{collection_number} completed - next run in 10 seconds...")
+                        self.add_log("AUTO MODE: Collection completed, waiting for next cycle", "INFO")
                         return True  # Continue auto-mode
                     else:
                         if not quota_still_available:
@@ -963,13 +962,8 @@ class YouTubeCollector:
             else:
                 self.add_log(f"AUTO MODE: Collection #{collection_number} found no videos", "INFO")
                 if st.session_state.auto_mode_running:
-                    # Shorter delay if no videos found
-                    set_status('info', f"AUTO MODE: Collection #{collection_number} found no videos - trying again in 5 seconds...")
-                    for i in range(5, 0, -1):
-                        if not st.session_state.auto_mode_running:
-                            return False
-                        set_status('info', f"AUTO MODE: No videos found - retrying in {i} seconds...")
-                        time.sleep(1)
+                    st.session_state.auto_mode_last_collection_time = time.time()
+                    set_status('info', f"AUTO MODE: Collection #{collection_number} found no videos - trying again in 10 seconds...")
                     return True
                 else:
                     st.session_state.auto_mode_running = False
@@ -1542,6 +1536,7 @@ def main():
                                     type="primary"):
                             st.session_state.auto_mode_running = True
                             st.session_state.auto_mode_stats = {'collections_completed': 0}
+                            st.session_state.auto_mode_last_collection_time = 0  # Start immediately
                             set_status('info', "AUTO MODE STARTED: Beginning continuous collection...")
                             st.rerun()
                     
