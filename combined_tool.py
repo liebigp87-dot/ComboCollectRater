@@ -882,24 +882,24 @@ class YouTubeCollector:
         return collected
     
     def run_auto_collection(self, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True, category: str = 'mixed'):
-        """Run auto collection cycle - simplified for reliability"""
+        """Run auto collection cycle - runs multiple collections until quota exhausted"""
         current_time = time.time()
         
-        # Check if an hour has passed since last check
+        # Check if an hour has passed since last quota exhaustion OR this is first run
         if (st.session_state.auto_mode_stats['last_check'] == 0 or 
             current_time - st.session_state.auto_mode_stats['last_check'] >= 3600):
             
-            st.session_state.auto_mode_stats['last_check'] = current_time
-            st.session_state.auto_mode_stats['next_check'] = current_time + 3600
-            
             try:
-                self.add_log(f"AUTO MODE: Starting collection cycle (category: {category})", "INFO")
-                
-                # Quick quota check
-                quota_available, _ = self.check_quota_available()
+                # Quick quota check before starting
+                quota_available, quota_message = self.check_quota_available()
                 if not quota_available:
-                    set_status('warning', "AUTO MODE: Waiting for quota refresh")
+                    # Quota exhausted - set timer for next hour
+                    st.session_state.auto_mode_stats['last_check'] = current_time
+                    st.session_state.auto_mode_stats['next_check'] = current_time + 3600
+                    set_status('warning', f"AUTO MODE: {quota_message} - waiting 1 hour")
                     return True
+                
+                self.add_log(f"AUTO MODE: Starting collection cycle (category: {category})", "INFO")
                 
                 # Run collection
                 videos = self.collect_videos(
@@ -916,22 +916,45 @@ class YouTubeCollector:
                     if sheet_url:
                         st.session_state.auto_mode_stats['collections_completed'] += 1
                         self.add_log(f"AUTO MODE: Collection #{st.session_state.auto_mode_stats['collections_completed']} completed - {len(videos)} videos", "SUCCESS")
-                        set_status('success', f"AUTO MODE: Collection #{st.session_state.auto_mode_stats['collections_completed']} completed with {len(videos)} videos")
                         
-                        # Simple timing - wait full hour for next run (no immediate re-runs)
-                        return True
+                        # Check if we can do another immediate run
+                        quota_still_available, _ = self.check_quota_available()
+                        if quota_still_available:
+                            # Reset last_check to 0 to allow immediate next run
+                            st.session_state.auto_mode_stats['last_check'] = 0
+                            st.session_state.auto_mode_stats['next_check'] = 0
+                            set_status('success', f"AUTO MODE: Collection #{st.session_state.auto_mode_stats['collections_completed']} completed - checking for next run")
+                        else:
+                            # Quota exhausted after this run - wait 1 hour
+                            st.session_state.auto_mode_stats['last_check'] = current_time
+                            st.session_state.auto_mode_stats['next_check'] = current_time + 3600
+                            set_status('success', f"AUTO MODE: Collection #{st.session_state.auto_mode_stats['collections_completed']} completed - quota exhausted, waiting 1 hour")
                     else:
                         set_status('warning', "AUTO MODE: Collection completed but export failed")
-                        return True
+                        # Don't reset timer on export failure - try again soon
+                        st.session_state.auto_mode_stats['last_check'] = current_time - 3300  # Try again in 5 minutes
+                        st.session_state.auto_mode_stats['next_check'] = current_time + 300
                 else:
                     self.add_log("AUTO MODE: No videos collected this cycle", "INFO")
-                    set_status('info', "AUTO MODE: No videos found this cycle")
-                    return True
+                    # No videos found - try again in 30 minutes
+                    st.session_state.auto_mode_stats['last_check'] = current_time - 1800
+                    st.session_state.auto_mode_stats['next_check'] = current_time + 1800
+                    set_status('info', "AUTO MODE: No videos found - trying again in 30 minutes")
+                
+                return True
                 
             except Exception as e:
                 self.add_log(f"AUTO MODE ERROR: {str(e)}", "ERROR")
                 set_status('error', f"AUTO MODE ERROR: {str(e)}")
-                return False
+                # On error, try again in 10 minutes
+                st.session_state.auto_mode_stats['last_check'] = current_time - 3000
+                st.session_state.auto_mode_stats['next_check'] = current_time + 600
+                return True
+        else:
+            # Still waiting - show countdown
+            remaining_minutes = max(0, int((st.session_state.auto_mode_stats['next_check'] - current_time) / 60))
+            if remaining_minutes > 0:
+                set_status('info', f"AUTO MODE: Next check in {remaining_minutes} minutes")
         
         return True
 
