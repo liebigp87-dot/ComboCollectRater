@@ -1485,8 +1485,15 @@ def main():
                     exporter = GoogleSheetsExporter(sheets_creds)
                     collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
                     
-                    # Run collection based on refresh count
-                    collector.run_auto_collection(youtube_api_key, exporter, spreadsheet_id, require_captions, category, auto_refresh_count)
+                    # Run collection based on refresh count - FIXED PARAMETER ORDER
+                    collector.run_auto_collection(
+                        api_key=youtube_api_key,
+                        sheets_exporter=exporter, 
+                        spreadsheet_id=spreadsheet_id,
+                        require_captions=require_captions,
+                        category=category,
+                        count=auto_refresh_count
+                    )
                     
                 except Exception as e:
                     set_status('error', f"AUTO MODE CRITICAL ERROR: {str(e)}")
