@@ -119,6 +119,12 @@ if 'is_batch_collecting' not in st.session_state:
     st.session_state.is_batch_collecting = False
 if 'batch_progress' not in st.session_state:
     st.session_state.batch_progress = {'current': 0, 'total': 0, 'results': []}
+if 'batch_current_cycle' not in st.session_state:
+    st.session_state.batch_current_cycle = 0
+if 'batch_total_cycles' not in st.session_state:
+    st.session_state.batch_total_cycles = 0
+if 'batch_settings' not in st.session_state:
+    st.session_state.batch_settings = {}
 
 
 def show_status_alert():
@@ -1707,7 +1713,20 @@ def main():
                 if not sheets_creds and auto_export:
                     set_status('error', "BATCH ABORTED: Google Sheets credentials required for auto-export")
                 else:
+                    # Initialize batch collection state machine
                     st.session_state.is_batch_collecting = True
+                    st.session_state.batch_current_cycle = 0
+                    st.session_state.batch_total_cycles = batch_count
+                    st.session_state.batch_progress = {'current': 0, 'total': batch_count, 'results': []}
+                    st.session_state.batch_settings = {
+                        'target_per_collection': batch_target_per_collection,
+                        'category': category,
+                        'spreadsheet_id': spreadsheet_id,
+                        'require_captions': require_captions,
+                        'auto_export': auto_export,
+                        'skip_quota_check': skip_quota_check
+                    }
+                    
                     set_status('info', f"BATCH STARTED: Running {batch_count} collections of {batch_target_per_collection} videos each")
                 st.rerun()
         
@@ -1723,6 +1742,9 @@ def main():
         with col3:
             if st.button("🔄 Reset Batch"):
                 st.session_state.batch_progress = {'current': 0, 'total': 0, 'results': []}
+                st.session_state.batch_current_cycle = 0
+                st.session_state.batch_total_cycles = 0
+                st.session_state.batch_settings = {}
                 clear_status()
                 st.rerun()
         
@@ -1788,72 +1810,124 @@ def main():
                                 st.error(f"Export Error: {result['export_error']}")
 
         
-        # Batch collection processing logic
+        # Batch collection state machine - runs one cycle per execution
         if st.session_state.is_batch_collecting:
             try:
-                # Create exporter if needed
-                exporter = None
-                if sheets_creds:
-                    exporter = GoogleSheetsExporter(sheets_creds)
+                current_cycle = st.session_state.batch_current_cycle + 1
+                total_cycles = st.session_state.batch_total_cycles
+                settings = st.session_state.batch_settings
                 
-                # Create collector
-                collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
-                
-                # Quota check
-                quota_available = True
-                if not skip_quota_check:
-                    quota_available, quota_message = collector.check_quota_available()
-                    if not quota_available:
-                        set_status('error', f"BATCH ABORTED: {quota_message}")
-                        st.session_state.is_batch_collecting = False
-                        st.rerun()
-                
-                # Run batch collection
-                if quota_available:
-                    def update_batch_progress(current, total):
-                        st.empty().markdown(f"⚡ **Running collection {current}/{total}...**")
+                # Check if we still have cycles to run
+                if st.session_state.batch_current_cycle < st.session_state.batch_total_cycles:
                     
-                    with st.spinner(f"Running batch collection: {batch_count} cycles..."):
-                        batch_results = collector.run_batch_collection(
-                            batch_count=batch_count,
-                            target_per_collection=batch_target_per_collection,
-                            category=category,
-                            spreadsheet_id=spreadsheet_id,
-                            require_captions=require_captions,
-                            progress_callback=update_batch_progress
-                        )
+                    # Update progress for current cycle
+                    st.session_state.batch_progress['current'] = current_cycle
                     
-                    # Process results - videos are already exported per cycle
-                    all_batch_videos = []
-                    failed_exports = []
-                    
-                    for result in batch_results:
-                        all_batch_videos.extend(result['videos'])
-                        # Also add to main collected videos for display
-                        st.session_state.collected_videos.extend(result['videos'])
+                    # Show current cycle status
+                    with st.spinner(f"🔄 Running batch cycle {current_cycle}/{total_cycles}..."):
                         
-                        # Track failed exports for potential retry
-                        if result.get('export_status') == 'failed':
-                            failed_exports.append(result)
-                    
-                    # Final status based on export results
-                    successful_exports = sum(1 for result in batch_results if result.get('export_status') == 'success')
-                    total_cycles = len(batch_results)
-                    total_videos = len(all_batch_videos)
-                    
-                    if failed_exports:
-                        failed_count = len(failed_exports)
-                        set_status('warning', f"BATCH COMPLETED WITH ERRORS: {total_cycles} collections, {successful_exports}/{total_cycles} successful exports, {total_videos} videos")
-                    elif total_cycles < batch_count:
-                        set_status('warning', f"BATCH ENDED EARLY: {total_cycles}/{batch_count} collections completed, {successful_exports} exports, {total_videos} videos")
-                    else:
-                        set_status('success', f"BATCH COMPLETED: {total_cycles} collections, all exports successful, {total_videos} videos")
+                        # Create collector
+                        exporter = GoogleSheetsExporter(sheets_creds) if sheets_creds else None
+                        collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
+                        
+                        # Quota check before cycle
+                        if not settings.get('skip_quota_check', False):
+                            quota_available, quota_message = collector.check_quota_available()
+                            if not quota_available:
+                                set_status('error', f"BATCH STOPPED at cycle {current_cycle}: {quota_message}")
+                                st.session_state.is_batch_collecting = False
+                                st.rerun()
+                        
+                        # Run single cycle
+                        cycle_result = collector.run_single_batch_cycle(
+                            cycle_number=current_cycle,
+                            target_per_collection=settings['target_per_collection'],
+                            category=settings['category'],
+                            spreadsheet_id=settings.get('spreadsheet_id'),
+                            require_captions=settings.get('require_captions', True)
+                        )
+                        
+                        # Export immediately if enabled and videos found
+                        if (settings.get('auto_export', False) and 
+                            cycle_result['videos'] and 
+                            len(cycle_result['videos']) > 0 and
+                            sheets_creds and
+                            settings.get('spreadsheet_id')):
+                            
+                            cycle_result['export_status'] = 'exporting'
+                            
+                            export_success, export_error, export_attempts = collector.export_with_retry(
+                                cycle_result['videos'],
+                                settings['spreadsheet_id']
+                            )
+                            
+                            cycle_result['export_attempts'] = export_attempts
+                            
+                            if export_success:
+                                cycle_result['export_status'] = 'success'
+                                cycle_result['export_completed_at'] = datetime.now().isoformat()
+                                collector.add_log(f"Cycle {current_cycle} exported successfully", "SUCCESS")
+                            else:
+                                cycle_result['export_status'] = 'failed'
+                                cycle_result['export_error'] = export_error
+                                collector.add_log(f"Cycle {current_cycle} export failed: {export_error}", "ERROR")
+                                
+                                # Stop batch on export failure
+                                st.session_state.batch_progress['results'].append(cycle_result)
+                                set_status('error', f"BATCH ABORTED at cycle {current_cycle}: Export failed after {export_attempts} attempts")
+                                st.session_state.is_batch_collecting = False
+                                st.rerun()
+                        
+                        elif cycle_result['videos'] and len(cycle_result['videos']) > 0:
+                            cycle_result['export_status'] = 'skipped'
+                            collector.add_log(f"Cycle {current_cycle}: Export skipped (auto-export disabled)", "INFO")
+                        else:
+                            cycle_result['export_status'] = 'no_videos'
+                            collector.add_log(f"Cycle {current_cycle}: No videos to export", "INFO")
+                        
+                        # Add cycle result to progress
+                        st.session_state.batch_progress['results'].append(cycle_result)
+                        
+                        # Increment cycle counter
+                        st.session_state.batch_current_cycle += 1
+                        
+                        # Show cycle completion
+                        videos_found = cycle_result['videos_found']
+                        export_status = cycle_result['export_status']
+                        
+                        if export_status == 'success':
+                            st.success(f"✅ Cycle {current_cycle}/{total_cycles} completed: {videos_found} videos collected and exported")
+                        elif export_status == 'skipped':
+                            st.info(f"ℹ️ Cycle {current_cycle}/{total_cycles} completed: {videos_found} videos collected (export skipped)")
+                        elif export_status == 'no_videos':
+                            st.warning(f"⚠️ Cycle {current_cycle}/{total_cycles} completed: No videos found")
+                        
+                        # Continue to next cycle after short delay
+                        if st.session_state.batch_current_cycle < st.session_state.batch_total_cycles:
+                            time.sleep(2)  # Brief pause between cycles
+                            st.rerun()  # Continue to next cycle
+                        else:
+                            # All cycles completed
+                            st.session_state.is_batch_collecting = False
+                            
+                            # Final summary
+                            total_videos = sum(result['videos_found'] for result in st.session_state.batch_progress['results'])
+                            successful_exports = sum(1 for result in st.session_state.batch_progress['results'] if result['export_status'] == 'success')
+                            
+                            set_status('success', f"BATCH COMPLETED: {total_cycles} collections, {total_videos} total videos, {successful_exports} successful exports")
+                            st.balloons()  # Celebration!
+                            st.rerun()
                 
+                else:
+                    # This shouldn't happen, but safety check
+                    st.session_state.is_batch_collecting = False
+                    st.rerun()
+                    
             except Exception as e:
-                set_status('error', f"BATCH FAILED: {str(e)}")
-                collector.add_log(f"Batch collection error: {str(e)}", "ERROR")
-            finally:
+                set_status('error', f"BATCH SYSTEM ERROR: {str(e)}")
                 st.session_state.is_batch_collecting = False
+                if 'collector' in locals():
+                    collector.add_log(f"Batch system error: {str(e)}", "ERROR")
                 st.rerun()
         
         # Display collected videos
