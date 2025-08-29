@@ -130,10 +130,16 @@ if 'target_mode_enabled' not in st.session_state:
     st.session_state.target_mode_enabled = False
 if 'target_videos' not in st.session_state:
     st.session_state.target_videos = 10
-if 'auto_mode_next_run_time' not in st.session_state:
-    st.session_state.auto_mode_next_run_time = 0
-if 'auto_mode_last_collection_time' not in st.session_state:
-    st.session_state.auto_mode_last_collection_time = 0
+if 'batch_mode_enabled' not in st.session_state:
+    st.session_state.batch_mode_enabled = False
+if 'batch_collections_target' not in st.session_state:
+    st.session_state.batch_collections_target = 5
+if 'batch_collections_completed' not in st.session_state:
+    st.session_state.batch_collections_completed = 0
+if 'batch_mode_running' not in st.session_state:
+    st.session_state.batch_mode_running = False
+if 'batch_results' not in st.session_state:
+    st.session_state.batch_results = []
 
 def show_status_alert():
     """Display system status alerts prominently"""
