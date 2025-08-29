@@ -1486,7 +1486,7 @@ def main():
                     collector = YouTubeCollector(youtube_api_key, sheets_exporter=exporter)
                     
                     # Run collection based on refresh count
-                    collector.run_auto_collection(auto_refresh_count, youtube_api_key, exporter, spreadsheet_id, require_captions, category)
+                    collector.run_auto_collection(youtube_api_key, exporter, spreadsheet_id, require_captions, category, auto_refresh_count)
                     
                 except Exception as e:
                     set_status('error', f"AUTO MODE CRITICAL ERROR: {str(e)}")
