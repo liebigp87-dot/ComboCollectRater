@@ -898,15 +898,7 @@ class YouTubeCollector:
         return collected
     
     def run_auto_collection(self, api_key: str, sheets_exporter, spreadsheet_id: str, require_captions: bool = True, category: str = 'mixed'):
-        """Run continuous auto-collection until quota exhausted or user stops"""
-        current_time = time.time()
-        
-        # Check if we're in a delay period
-        if st.session_state.auto_mode_next_run_time > current_time:
-            remaining_seconds = int(st.session_state.auto_mode_next_run_time - current_time)
-            set_status('info', f"AUTO MODE: Waiting {remaining_seconds}s before next collection...")
-            return True  # Continue auto-mode but wait
-        
+        """Run continuous auto-collection with short blocking sleeps and forced refreshes"""
         collection_number = st.session_state.auto_mode_stats.get('collections_completed', 0) + 1
         
         try:
@@ -940,10 +932,19 @@ class YouTubeCollector:
                     # Check quota after collection
                     quota_still_available, _ = self.check_quota_available()
                     if quota_still_available and st.session_state.auto_mode_running:
-                        # Set timer for next collection (45 seconds from now)
-                        st.session_state.auto_mode_next_run_time = time.time() + 45
-                        set_status('success', f"AUTO MODE: Collection #{collection_number} completed - next run in 45 seconds...")
-                        self.add_log("AUTO MODE: Setting 45-second delay before next collection", "INFO")
+                        # Show success message and prepare for next run
+                        set_status('success', f"AUTO MODE: Collection #{collection_number} completed - preparing next run...")
+                        self.add_log("AUTO MODE: Starting 10-second delay before next collection", "INFO")
+                        
+                        # Short blocking sleep with progress updates
+                        for i in range(10, 0, -1):
+                            if not st.session_state.auto_mode_running:  # Check if user stopped
+                                self.add_log("AUTO MODE: Stopped by user during delay", "INFO")
+                                return False
+                            set_status('info', f"AUTO MODE: Next collection in {i} seconds... (Collection #{collection_number + 1})")
+                            time.sleep(1)  # 1-second increments
+                        
+                        self.add_log("AUTO MODE: Delay completed, continuing to next collection", "INFO")
                         return True  # Continue auto-mode
                     else:
                         if not quota_still_available:
@@ -953,31 +954,31 @@ class YouTubeCollector:
                             self.add_log("AUTO MODE: Stopped by user", "INFO")
                             set_status('info', f"AUTO MODE STOPPED: User interrupted after {collection_number} collections")
                         st.session_state.auto_mode_running = False
-                        st.session_state.auto_mode_next_run_time = 0
                         return False
                 else:
                     self.add_log(f"AUTO MODE: Collection #{collection_number} export failed", "ERROR")
                     set_status('error', f"AUTO MODE: Collection #{collection_number} export failed - stopping")
                     st.session_state.auto_mode_running = False
-                    st.session_state.auto_mode_next_run_time = 0
                     return False
             else:
                 self.add_log(f"AUTO MODE: Collection #{collection_number} found no videos", "INFO")
                 if st.session_state.auto_mode_running:
                     # Shorter delay if no videos found
-                    st.session_state.auto_mode_next_run_time = time.time() + 30
-                    set_status('info', f"AUTO MODE: Collection #{collection_number} found no videos - next run in 30 seconds...")
+                    set_status('info', f"AUTO MODE: Collection #{collection_number} found no videos - trying again in 5 seconds...")
+                    for i in range(5, 0, -1):
+                        if not st.session_state.auto_mode_running:
+                            return False
+                        set_status('info', f"AUTO MODE: No videos found - retrying in {i} seconds...")
+                        time.sleep(1)
                     return True
                 else:
                     st.session_state.auto_mode_running = False
-                    st.session_state.auto_mode_next_run_time = 0
                     return False
                 
         except Exception as e:
             self.add_log(f"AUTO MODE ERROR in collection #{collection_number}: {str(e)}", "ERROR")
             set_status('error', f"AUTO MODE ERROR: {str(e)}")
             st.session_state.auto_mode_running = False
-            st.session_state.auto_mode_next_run_time = 0
             return False
 
 
@@ -1529,7 +1530,6 @@ def main():
                     
                     if st.button("⏹️ Stop Auto Mode", type="secondary"):
                         st.session_state.auto_mode_running = False
-                        st.session_state.auto_mode_next_run_time = 0
                         set_status('warning', "AUTO MODE STOPPED: Process terminated by user")
                         st.rerun()
                 else:
@@ -1551,7 +1551,6 @@ def main():
                             st.session_state.auto_mode_running = False
                             st.session_state.auto_mode_enabled = False
                             st.session_state.auto_mode_stats = {'collections_completed': 0}
-                            st.session_state.auto_mode_next_run_time = 0
                             st.session_state.is_collecting = False
                             clear_status()
                             st.success("Auto mode reset")
