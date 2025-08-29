@@ -981,13 +981,30 @@ class YouTubeCollector:
             
             self.add_log(f"Collection cycle {i+1}/{batch_count} completed: {collection_result['videos_found']} videos found", "SUCCESS")
             
+            # Check quota after each cycle (except the last one)
+            if i < batch_count - 1 and st.session_state.is_batch_collecting:
+                self.add_log("Checking API quota before next collection cycle...", "INFO")
+                quota_available, quota_message = self.check_quota_available()
+                
+                if not quota_available:
+                    self.add_log(f"Batch stopped at cycle {i+1}/{batch_count}: {quota_message}", "WARNING")
+                    st.session_state.is_batch_collecting = False  # Stop the batch
+                    break
+                else:
+                    self.add_log(f"API quota check passed, continuing to cycle {i+2}/{batch_count}", "INFO")
+            
             # Brief pause between collections (API safety)
             if i < batch_count - 1 and st.session_state.is_batch_collecting:  # Don't delay after last collection or if stopped
                 self.add_log("Pausing 3 seconds between collection cycles...", "INFO")
                 time.sleep(3)
         
         total_videos = sum(result['videos_found'] for result in batch_results)
-        self.add_log(f"Batch collection completed: {len(batch_results)} cycles, {total_videos} total videos", "SUCCESS")
+        cycles_completed = len(batch_results)
+        
+        if cycles_completed < batch_count:
+            self.add_log(f"Batch collection ended early: {cycles_completed}/{batch_count} cycles completed, {total_videos} total videos", "WARNING")
+        else:
+            self.add_log(f"Batch collection completed: {cycles_completed} cycles, {total_videos} total videos", "SUCCESS")
         
         return batch_results
 
@@ -1803,7 +1820,13 @@ def main():
                             set_status('warning', f"BATCH COMPLETED: {len(batch_results)} collections, {len(all_batch_videos)} videos found but export failed")
                     else:
                         total_videos = len(all_batch_videos)
-                        set_status('success', f"BATCH COMPLETED: {len(batch_results)} collections, {total_videos} videos found")
+                        cycles_completed = len(batch_results)
+                        expected_cycles = batch_count
+                        
+                        if cycles_completed < expected_cycles:
+                            set_status('warning', f"BATCH ENDED EARLY: {cycles_completed}/{expected_cycles} collections completed, {total_videos} videos found (quota exhausted)")
+                        else:
+                            set_status('success', f"BATCH COMPLETED: {cycles_completed} collections, {total_videos} videos found")
                 
             except Exception as e:
                 set_status('error', f"BATCH FAILED: {str(e)}")
