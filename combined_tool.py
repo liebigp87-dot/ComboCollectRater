@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Combined YouTube Data Collector & Video Rating Tool
+Combined YouTube Data Collector & Video Rating Tool - FIXED BATCH COLLECTION
 Collects YouTube videos and rates them for content suitability
 """
 
@@ -400,7 +400,6 @@ class YouTubeCollector:
         # Search queries for unified categories
         self.search_queries = {
             'heartwarming': [
-                # Original queries (minus any conflicting ones)
                 'soldier surprise homecoming', 'dog reunion owner', 'random acts kindness',
                 'baby first time hearing', 'proposal reaction emotional', 'surprise gift reaction',
                 'homeless man helped', 'teacher surprised students', 'reunion after years',
@@ -411,23 +410,16 @@ class YouTubeCollector:
                 'child generous sharing', 'unexpected hero saves', 'touching tribute video',
                 'faith humanity restored', 'emotional thank you',
                 'surprise birthday elderly', 'veteran honored ceremony', 'wholesome interaction strangers',
-                # New expanded queries
+                # Additional heartwarming queries
                 'military surprise family', 'adopted child meets birth parents', 'community rallies sick child',
                 'teacher retirement surprise', 'student surprises janitor', 'neighbor helps neighbor moving',
                 'blind person sees again', 'deaf person hears music', 'wheelchair surprise gift',
                 'cancer survivor celebration', 'graduation surprise parent', 'wedding surprise dance',
                 'pregnancy announcement reaction', 'gender reveal emotional', 'birth announcement family',
                 'foster pet adoption', 'service dog training', 'therapy animal visit',
-                'fundraiser goal reached', 'scholarship surprise student', 'house rebuilt volunteers',
-                'food bank volunteer', 'christmas surprise family', 'birthday surprise homeless',
-                'prom dress donation', 'shoes for students', 'backpack drive school',
-                'elderly person birthday', 'nursing home visit', 'grandparent technology help',
-                'sibling reunion emotional', 'long distance relationship', 'childhood friend reunion',
-                'pay it forward chain', 'anonymous donation recipient', 'good samaritan highway',
-                'lost wallet returned', 'umbrella stranger rain', 'help carrying groceries'
+                'fundraiser goal reached', 'scholarship surprise student', 'house rebuilt volunteers'
             ],
             'funny': [
-                # Original queries (removing conflicting ones)
                 'unexpected moments caught', 'comedy sketches viral',
                 'hilarious reactions', 'funny animals doing', 'epic fail video',
                 'instant karma funny', 'comedy gold moments', 'prank goes wrong',
@@ -438,7 +430,7 @@ class YouTubeCollector:
                 'hilarious interview moments', 'comedy accident harmless', 'funny dancing fails',
                 'laughing contagious video', 'funny sleep talking', 'comedy scare pranks',
                 'funny workout fails', 'hilarious costume fails', 'funny zoom fails',
-                # New expanded queries
+                # Additional funny queries
                 'elevator prank harmless', 'autocorrect text fails', 'cooking disaster funny',
                 'parking fail video', 'phone autocorrect mom', 'grocery store slip',
                 'escalator first time', 'automatic door confusion', 'gps directions wrong',
@@ -446,16 +438,9 @@ class YouTubeCollector:
                 'delivery driver surprise', 'pizza delivery wrong house', 'food delivery mix up',
                 'weather reporter funny', 'news anchor laugh', 'reporter animal interruption',
                 'kid logic funny', 'children say darndest', 'toddler tantrum funny',
-                'baby taste lemon', 'infant mirror reaction', 'child discovers shadow',
-                'pet door confusion', 'cat vs cucumber', 'dog treats hidden',
-                'office prank harmless', 'coworker surprise funny', 'meeting call funny',
-                'exercise equipment fail', 'yoga pose gone wrong', 'treadmill mishap',
-                'karaoke gone wrong', 'singing shower caught', 'dance lesson fail',
-                'magic trick reveal', 'card trick backfire', 'costume malfunction funny',
-                'autocomplete search funny', 'voice command misunderstood', 'translation app funny'
+                'baby taste lemon', 'infant mirror reaction', 'child discovers shadow'
             ],
             'traumatic': [
-                # Original queries (removing conflicting ones)
                 'shocking moments caught', 'dramatic rescue operation', 'natural disaster footage',
                 'intense police chase', 'survival story real', 'near death experience',
                 'unbelievable close call', 'extreme weather footage', 'emergency response dramatic',
@@ -466,19 +451,13 @@ class YouTubeCollector:
                 'helicopter rescue dramatic', 'cliff rescue operation', 'shark encounter real',
                 'volcano eruption footage', 'mudslide caught camera', 'train near miss',
                 'bridge collapse footage', 'explosion caught camera', 'emergency landing footage',
-                # New expanded queries
+                # Additional traumatic queries
                 'wildfire escape footage', 'building evacuation emergency', 'storm damage aftermath',
                 'hurricane survivor story', 'tsunami escape video', 'landslide near miss',
                 'sinkhole opens suddenly', 'ice storm danger', 'hail storm damage',
                 'flash flood rescue', 'river rapids rescue', 'ocean current survivor',
                 'mountain rescue operation', 'cave rescue dramatic', 'mine collapse rescue',
-                'construction accident dramatic', 'crane collapse footage', 'scaffolding collapse caught',
-                'fire department rescue', 'paramedic emergency response', 'ambulance emergency call',
-                'coast guard rescue', 'lifeguard dramatic save', 'water rescue operation',
-                'aircraft emergency landing', 'pilot emergency procedure', 'runway emergency landing',
-                'highway pile up', 'multi car accident', 'truck brake failure',
-                'industrial accident footage', 'factory explosion aftermath', 'chemical spill emergency',
-                'gas leak evacuation', 'power line down', 'electrical fire emergency'
+                'construction accident dramatic', 'crane collapse footage', 'scaffolding collapse caught'
             ]
         }
         
@@ -489,11 +468,11 @@ class YouTubeCollector:
         ]
         
         self.compilation_keywords = [
-            'best of', 'top 10', 'top 20',
+            'best of', 'top 10', 'top 20', 'compilation',
             'montage', 'every time', 'all moments', 'mega compilation',
             'highlights', 'recap', 'supercut', 'mashup', 'ultimate', 'collection', 
             'greatest hits', 'best moments', 'funniest', 'top 5', 'top 15', 'top 25', 
-            'top 50', 'top 100', 'fails compilation', 'bloopers', 'security camera footage'
+            'top 50', 'top 100', 'fails compilation', 'bloopers'
         ]
     
     def add_log(self, message: str, log_type: str = "INFO"):
@@ -812,7 +791,7 @@ class YouTubeCollector:
         
         self.add_log(f"✓ Category check passed - matched keywords: {', '.join(matched_keywords[:3])}", "SUCCESS")
         
-        # Step 13: Compilation check - filter actual video title
+        # Step 13: Final compilation check - filter actual video title
         compilation_keywords = [
             'best of', 'top 10', 'top 20', 'compilation', 'highlights', 'recap', 
             'montage', 'supercut', 'mashup', 'ultimate', 'collection', 'greatest hits', 
@@ -946,73 +925,69 @@ class YouTubeCollector:
         
         return collected
     
-    def run_batch_collection(self, batch_count: int, target_per_collection: int = 10, 
-                            category: str = 'mixed', spreadsheet_id: str = None, 
-                            require_captions: bool = True, progress_callback=None):
-        """Run multiple collection cycles sequentially"""
+    # NEW METHODS FOR BATCH COLLECTION
+    def run_single_batch_cycle(self, cycle_number: int, target_per_collection: int = 10, 
+                              category: str = 'mixed', spreadsheet_id: str = None, 
+                              require_captions: bool = True):
+        """Run a single batch collection cycle"""
         
-        batch_results = []
-        st.session_state.batch_progress = {'current': 0, 'total': batch_count, 'results': []}
+        self.add_log(f"Starting batch cycle {cycle_number}: target {target_per_collection} videos", "INFO")
         
-        self.add_log(f"Starting batch collection: {batch_count} cycles of {target_per_collection} videos each", "INFO")
+        # Use existing collect_videos method
+        videos = self.collect_videos(
+            target_count=target_per_collection,
+            category=category,
+            spreadsheet_id=spreadsheet_id,
+            require_captions=require_captions
+        )
         
-        for i in range(batch_count):
-            if not st.session_state.is_batch_collecting:  # Check if user stopped
-                self.add_log(f"Batch collection stopped by user at cycle {i+1}/{batch_count}", "WARNING")
-                break
+        # Ensure videos is always a list
+        if videos is None:
+            videos = []
+        
+        cycle_result = {
+            'collection_number': cycle_number,
+            'videos_found': len(videos),
+            'videos': videos,
+            'completed_at': datetime.now().isoformat()
+        }
+        
+        self.add_log(f"Batch cycle {cycle_number} completed: {len(videos)} videos found", "SUCCESS")
+        
+        return cycle_result
+    
+    def export_with_retry(self, videos: List[Dict], spreadsheet_id: str, max_attempts: int = 3):
+        """Export videos to sheets with retry logic"""
+        
+        if not videos or not self.sheets_exporter:
+            return False, "No videos to export or no exporter available", 0
+        
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.add_log(f"Export attempt {attempt}/{max_attempts}: {len(videos)} videos", "INFO")
                 
-            # Update progress
-            st.session_state.batch_progress['current'] = i + 1
-            if progress_callback:
-                progress_callback(i + 1, batch_count)
-            
-            self.add_log(f"Starting collection cycle {i+1}/{batch_count}", "INFO")
-            
-            # Use existing collect_videos method (no changes needed!)
-            collection_videos = self.collect_videos(
-                target_count=target_per_collection,
-                category=category,
-                spreadsheet_id=spreadsheet_id,
-                require_captions=require_captions
-            )
-            
-            # Store individual collection result
-            collection_result = {
-                'collection_number': i + 1,
-                'videos_found': len(collection_videos) if collection_videos else 0,
-                'videos': collection_videos or []
-            }
-            batch_results.append(collection_result)
-            st.session_state.batch_progress['results'].append(collection_result)
-            
-            self.add_log(f"Collection cycle {i+1}/{batch_count} completed: {collection_result['videos_found']} videos found", "SUCCESS")
-            
-            # Check quota after each cycle (except the last one)
-            if i < batch_count - 1 and st.session_state.is_batch_collecting:
-                self.add_log("Checking API quota before next collection cycle...", "INFO")
-                quota_available, quota_message = self.check_quota_available()
+                sheet_url = self.sheets_exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
                 
-                if not quota_available:
-                    self.add_log(f"Batch stopped at cycle {i+1}/{batch_count}: {quota_message}", "WARNING")
-                    st.session_state.is_batch_collecting = False  # Stop the batch
-                    break
+                if sheet_url:
+                    self.add_log(f"Export successful on attempt {attempt}", "SUCCESS")
+                    return True, None, attempt
                 else:
-                    self.add_log(f"API quota check passed, continuing to cycle {i+2}/{batch_count}", "INFO")
-            
-            # Brief pause between collections (API safety)
-            if i < batch_count - 1 and st.session_state.is_batch_collecting:  # Don't delay after last collection or if stopped
-                self.add_log("Pausing 3 seconds between collection cycles...", "INFO")
-                time.sleep(3)
+                    error_msg = f"Export attempt {attempt} failed: No URL returned"
+                    self.add_log(error_msg, "WARNING")
+                    if attempt == max_attempts:
+                        return False, "No URL returned after all attempts", attempt
+                    
+            except Exception as e:
+                error_msg = f"Export attempt {attempt} failed: {str(e)}"
+                self.add_log(error_msg, "WARNING")
+                
+                if attempt == max_attempts:
+                    return False, str(e), attempt
+                else:
+                    # Brief delay before retry
+                    time.sleep(2)
         
-        total_videos = sum(result['videos_found'] for result in batch_results)
-        cycles_completed = len(batch_results)
-        
-        if cycles_completed < batch_count:
-            self.add_log(f"Batch collection ended early: {cycles_completed}/{batch_count} cycles completed, {total_videos} total videos", "WARNING")
-        else:
-            self.add_log(f"Batch collection completed: {cycles_completed} cycles, {total_videos} total videos", "SUCCESS")
-        
-        return batch_results
+        return False, "Unknown export error", max_attempts
 
 
 class VideoRater:
@@ -1558,7 +1533,7 @@ def main():
                 else:
                     st.session_state.is_collecting = True
                     
-                    videos = []  # Initialize to avoid None issues
+                    videos = []
                     
                     try:
                         # Create exporter if needed
@@ -1610,7 +1585,7 @@ def main():
                             else:
                                 set_status('warning', "COLLECTION COMPLETED: No videos found")
                             
-                            # Export phase - ALWAYS TRY IF THERE ARE VIDEOS TO EXPORT
+                            # Export phase
                             if auto_export and sheets_creds and videos and len(videos) > 0:
                                 try:
                                     collector.add_log(f"Starting export of {len(videos)} videos to Google Sheets", "INFO")
@@ -1652,7 +1627,7 @@ def main():
                 st.session_state.collected_videos = []
                 st.session_state.collector_stats = {'checked': 0, 'found': 0, 'rejected': 0, 'api_calls': 0, 'has_captions': 0, 'no_captions': 0}
                 st.session_state.batch_progress = {'current': 0, 'total': 0, 'results': []}
-                st.session_state.logs = []  # Also clear logs
+                st.session_state.logs = []
                 clear_status()
                 st.rerun()
         
@@ -1713,7 +1688,7 @@ def main():
                 if not sheets_creds and auto_export:
                     set_status('error', "BATCH ABORTED: Google Sheets credentials required for auto-export")
                 else:
-                    # Initialize batch collection state machine
+                    # Initialize batch collection state
                     st.session_state.is_batch_collecting = True
                     st.session_state.batch_current_cycle = 0
                     st.session_state.batch_total_cycles = batch_count
@@ -1776,7 +1751,7 @@ def main():
                     avg_per_collection = total_videos_found / len(progress['results']) if progress['results'] else 0
                     st.metric("Average per Collection", f"{avg_per_collection:.1f}")
                 
-                # Individual results table with export status
+                # Individual results table
                 for result in progress['results']:
                     col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
                     with col1:
@@ -1796,7 +1771,7 @@ def main():
                         elif export_status == 'skipped':
                             st.info("⏭️ Skipped")
                         elif export_status == 'no_videos':
-                            st.info("📭 No videos")
+                            st.info("🔭 No videos")
                         else:
                             st.info("⏳ Pending")
                     with col4:
@@ -1838,7 +1813,7 @@ def main():
                                 st.session_state.is_batch_collecting = False
                                 st.rerun()
                         
-                        # Run single cycle
+                        # Run single cycle using the new method
                         cycle_result = collector.run_single_batch_cycle(
                             cycle_number=current_cycle,
                             target_per_collection=settings['target_per_collection'],
@@ -1904,8 +1879,8 @@ def main():
                         
                         # Continue to next cycle after short delay
                         if st.session_state.batch_current_cycle < st.session_state.batch_total_cycles:
-                            time.sleep(2)  # Brief pause between cycles
-                            st.rerun()  # Continue to next cycle
+                            time.sleep(2)
+                            st.rerun()
                         else:
                             # All cycles completed
                             st.session_state.is_batch_collecting = False
@@ -1915,7 +1890,7 @@ def main():
                             successful_exports = sum(1 for result in st.session_state.batch_progress['results'] if result['export_status'] == 'success')
                             
                             set_status('success', f"BATCH COMPLETED: {total_cycles} collections, {total_videos} total videos, {successful_exports} successful exports")
-                            st.balloons()  # Celebration!
+                            st.balloons()
                             st.rerun()
                 
                 else:
@@ -2141,7 +2116,7 @@ def main():
                                 exporter.delete_raw_video(spreadsheet_id, next_video['row_number'])
                         
                         # Small delay and rerun to continue the loop
-                        if st.session_state.is_rating:  # Check if still rating
+                        if st.session_state.is_rating:
                             time.sleep(0.5)
                             st.rerun()
                 
@@ -2152,7 +2127,7 @@ def main():
     # Activity log
     with st.expander("Activity Log", expanded=False):
         if st.session_state.logs:
-            for log in st.session_state.logs[-20:]:  # Show last 20 entries
+            for log in st.session_state.logs[-20:]:
                 if "SUCCESS" in log:
                     st.success(log)
                 elif "ERROR" in log:
