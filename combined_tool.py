@@ -43,7 +43,7 @@ except ImportError:
 # Page config
 st.set_page_config(
     page_title="YouTube Collection & Rating Tool",
-    page_icon="ðŸŽ¬",
+    page_icon="🎬",
     layout="wide"
 )
 
@@ -131,13 +131,13 @@ def show_status_alert():
     """Display system status alerts prominently"""
     if st.session_state.system_status['type']:
         if st.session_state.system_status['type'] == 'error':
-            st.error(f"ðŸš« {st.session_state.system_status['message']}")
+            st.error(f"🚫 {st.session_state.system_status['message']}")
         elif st.session_state.system_status['type'] == 'warning':
-            st.warning(f"âš ï¸ {st.session_state.system_status['message']}")
+            st.warning(f"⚠️ {st.session_state.system_status['message']}")
         elif st.session_state.system_status['type'] == 'info':
-            st.info(f"â„¹ï¸ {st.session_state.system_status['message']}")
+            st.info(f"ℹ️ {st.session_state.system_status['message']}")
         elif st.session_state.system_status['type'] == 'success':
-            st.success(f"âœ… {st.session_state.system_status['message']}")
+            st.success(f"✅ {st.session_state.system_status['message']}")
 
 def set_status(status_type: str, message: str):
     """Set system status message"""
@@ -150,17 +150,17 @@ def clear_status():
 CATEGORIES = {
     'heartwarming': {
         'name': 'Heartwarming Content',
-        'emoji': 'â¤ï¸',
+        'emoji': '❤️',
         'description': 'Genuine emotional moments that create positive feelings'
     },
     'funny': {
         'name': 'Funny Content', 
-        'emoji': 'ðŸ˜‚',
+        'emoji': '😂',
         'description': 'Humorous content that entertains and amuses'
     },
     'traumatic': {
         'name': 'Traumatic Events',
-        'emoji': 'âš ï¸', 
+        'emoji': '⚠️', 
         'description': 'Serious events with significant impact'
     }
 }
@@ -696,7 +696,7 @@ class YouTubeCollector:
             self.add_log(f"REJECTED: Could not fetch video details for {video_id}", "WARNING")
             return False, "Could not fetch video details"
         
-        self.add_log(f"âœ“ Video details fetched successfully", "INFO")
+        self.add_log(f"✓ Video details fetched successfully", "INFO")
         
         # Step 2: Duplicate check - Current session
         existing_ids = [v['video_id'] for v in st.session_state.collected_videos]
@@ -704,21 +704,21 @@ class YouTubeCollector:
             self.add_log(f"REJECTED: Video {video_id} already in current session", "WARNING")
             return False, "Duplicate video (already in current session)"
         
-        self.add_log(f"âœ“ Not duplicate in current session", "INFO")
+        self.add_log(f"✓ Not duplicate in current session", "INFO")
         
         # Step 3: Duplicate check - Already in raw_links
         if video_id in self.existing_sheet_ids:
             self.add_log(f"REJECTED: Video {video_id} already exists in raw_links sheet", "WARNING")
             return False, "Duplicate video (already in raw_links)"
         
-        self.add_log(f"âœ“ Not duplicate in raw_links sheet", "INFO")
+        self.add_log(f"✓ Not duplicate in raw_links sheet", "INFO")
         
         # Step 4: Duplicate check - Already processed (in discarded)
         if video_url in self.discarded_urls:
             self.add_log(f"REJECTED: Video URL already processed (found in discarded table)", "WARNING")
             return False, "Video already processed (found in discarded)"
         
-        self.add_log(f"âœ“ Not found in discarded table", "INFO")
+        self.add_log(f"✓ Not found in discarded table", "INFO")
         
         # Step 5: Caption check
         if require_captions:
@@ -726,10 +726,10 @@ class YouTubeCollector:
             if not has_captions:
                 self.add_log(f"REJECTED: No captions available for video {video_id}", "WARNING")
                 return False, "No captions available"
-            self.add_log(f"âœ“ Captions available", "INFO")
+            self.add_log(f"✓ Captions available", "INFO")
         else:
             self.check_caption_availability(details)
-            self.add_log(f"âœ“ Caption check skipped (not required)", "INFO")
+            self.add_log(f"✓ Caption check skipped (not required)", "INFO")
         
         # Step 6: Age check
         published_at = datetime.fromisoformat(details['snippet']['publishedAt'].replace('Z', '+00:00'))
@@ -740,14 +740,14 @@ class YouTubeCollector:
             self.add_log(f"REJECTED: Video too old ({age_days} days, limit: 180 days)", "WARNING")
             return False, "Video older than 6 months"
         
-        self.add_log(f"âœ“ Age check passed ({age_days} days old)", "INFO")
+        self.add_log(f"✓ Age check passed ({age_days} days old)", "INFO")
         
         # Step 7: YouTube Short check
         if self.is_youtube_short(video_id, details):
             self.add_log(f"REJECTED: Video detected as YouTube Short", "WARNING")
             return False, "YouTube Short detected"
         
-        self.add_log(f"âœ“ Not a YouTube Short", "INFO")
+        self.add_log(f"✓ Not a YouTube Short", "INFO")
         
         # Step 8: Duration check
         duration = isodate.parse_duration(details['contentDetails']['duration'])
@@ -757,7 +757,7 @@ class YouTubeCollector:
             self.add_log(f"REJECTED: Video too short ({duration_seconds}s, minimum: 90s)", "WARNING")
             return False, f"Video too short ({duration_seconds}s < 90s)"
         
-        self.add_log(f"âœ“ Duration check passed ({duration_seconds}s)", "INFO")
+        self.add_log(f"✓ Duration check passed ({duration_seconds}s)", "INFO")
         
         # Step 9: Content type exclusion - Music
         title_lower = details['snippet']['title'].lower()
@@ -768,7 +768,7 @@ class YouTubeCollector:
                 self.add_log(f"REJECTED: Music video detected (keyword: {keyword})", "WARNING")
                 return False, f"Music video detected (keyword: {keyword})"
         
-        self.add_log(f"âœ“ Music video check passed", "INFO")
+        self.add_log(f"✓ Music video check passed", "INFO")
         
         # Step 10: Content type exclusion - Compilation
         for keyword in self.compilation_keywords:
@@ -776,7 +776,7 @@ class YouTubeCollector:
                 self.add_log(f"REJECTED: Compilation video detected (keyword: {keyword})", "WARNING")
                 return False, f"Compilation detected (keyword: {keyword})"
         
-        self.add_log(f"âœ“ Compilation check passed", "INFO")
+        self.add_log(f"✓ Compilation check passed", "INFO")
         
         # Step 11: View count check
         view_count = int(details['statistics'].get('viewCount', 0))
@@ -784,7 +784,7 @@ class YouTubeCollector:
             self.add_log(f"REJECTED: View count too low ({view_count:,}, minimum: 10,000)", "WARNING")
             return False, f"View count too low ({view_count} < 10,000)"
         
-        self.add_log(f"âœ“ View count check passed ({view_count:,} views)", "INFO")
+        self.add_log(f"✓ View count check passed ({view_count:,} views)", "INFO")
         
         # Step 12: Category relevance check
         title_desc_text = (title_lower + ' ' + details['snippet'].get('description', '')).lower()
@@ -810,7 +810,7 @@ class YouTubeCollector:
             self.add_log(f"REJECTED: No {target_category} keywords found in title/description", "WARNING")
             return False, f"No {target_category} keywords found in title/description"
         
-        self.add_log(f"âœ“ Category check passed - matched keywords: {', '.join(matched_keywords[:3])}", "SUCCESS")
+        self.add_log(f"✓ Category check passed - matched keywords: {', '.join(matched_keywords[:3])}", "SUCCESS")
         
         # Step 13: Compilation check - filter actual video title
         compilation_keywords = [
@@ -826,7 +826,7 @@ class YouTubeCollector:
                 self.add_log(f"REJECTED: Compilation detected in title (keyword: {comp_keyword})", "WARNING")
                 return False, f"Compilation detected in title (keyword: {comp_keyword})"
         
-        self.add_log(f"âœ“ Compilation check passed", "INFO")
+        self.add_log(f"✓ Compilation check passed", "INFO")
         self.add_log(f"VALIDATION COMPLETE: Video {video_id} passed all checks!", "SUCCESS")
         
         return True, details
@@ -920,7 +920,7 @@ class YouTubeCollector:
                     st.session_state.collector_stats['found'] += 1
                     videos_found_this_query += 1
                     
-                    self.add_log(f"âœ… ADDED TO COLLECTION: {video_record['title'][:50]}... (category: {current_category})", "SUCCESS")
+                    self.add_log(f"✅ ADDED TO COLLECTION: {video_record['title'][:50]}... (category: {current_category})", "SUCCESS")
                     self.add_log(f"Collection stats - Found: {st.session_state.collector_stats['found']}, Target: {target_count}", "INFO")
                     
                     if progress_callback:
@@ -1617,7 +1617,7 @@ def main():
                                     sheet_url = exporter.export_to_sheets(videos, spreadsheet_id=spreadsheet_id)
                                     
                                     if sheet_url:
-                                        st.success("âœ… Exported to Google Sheets!")
+                                        st.success("✅ Exported to Google Sheets!")
                                         st.markdown(f"[Open Spreadsheet]({sheet_url})")
                                         collector.add_log(f"EXPORT SUCCESS: {len(videos)} videos exported", "SUCCESS")
                                         set_status('success', f"EXPORT SUCCESS: {len(videos)} videos exported to raw_links")
@@ -1677,7 +1677,7 @@ def main():
         
         # Batch Collection Mode Section
         st.divider()
-        st.subheader("ðŸ”„ Batch Collection Mode")
+        st.subheader("🔄 Batch Collection Mode")
         st.caption("Run multiple collection cycles automatically")
         
         col1, col2 = st.columns([1, 1])
@@ -1705,7 +1705,7 @@ def main():
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
-            if st.button("ðŸš€ Start Batch Collection", 
+            if st.button("🚀 Start Batch Collection", 
                         disabled=st.session_state.is_collecting or st.session_state.is_batch_collecting or not youtube_api_key,
                         type="primary"):
                 clear_status()
@@ -1731,7 +1731,7 @@ def main():
                 st.rerun()
         
         with col2:
-            if st.button("â¹ï¸ Stop Batch", 
+            if st.button("⏹️ Stop Batch", 
                         disabled=not st.session_state.is_batch_collecting):
                 st.session_state.is_batch_collecting = False
                 current = st.session_state.batch_progress.get('current', 0)
@@ -1740,7 +1740,7 @@ def main():
                 st.rerun()
         
         with col3:
-            if st.button("ðŸ”„ Reset Batch"):
+            if st.button("🔄 Reset Batch"):
                 st.session_state.batch_progress = {'current': 0, 'total': 0, 'results': []}
                 st.session_state.batch_current_cycle = 0
                 st.session_state.batch_total_cycles = 0
@@ -1759,7 +1759,7 @@ def main():
             
             # Individual collection results
             if progress['results']:
-                st.subheader("ðŸ“Š Batch Collection Results")
+                st.subheader("📊 Batch Collection Results")
                 
                 # Summary metrics
                 total_videos_found = sum(result['videos_found'] for result in progress['results'])
@@ -1786,19 +1786,19 @@ def main():
                     with col3:
                         export_status = result.get('export_status', 'pending')
                         if export_status == 'success':
-                            st.success("âœ… Exported")
+                            st.success("✅ Exported")
                         elif export_status == 'failed':
-                            st.error("âŒ Failed")
+                            st.error("❌ Failed")
                         elif export_status == 'exporting':
-                            st.info("ðŸ“¤ Exporting...")
+                            st.info("📤 Exporting...")
                         elif export_status == 'retrying':
-                            st.warning("ðŸ”„ Retrying")
+                            st.warning("🔄 Retrying")
                         elif export_status == 'skipped':
-                            st.info("â­ï¸ Skipped")
+                            st.info("⏭️ Skipped")
                         elif export_status == 'no_videos':
-                            st.info("ðŸ“­ No videos")
+                            st.info("📭 No videos")
                         else:
-                            st.info("â³ Pending")
+                            st.info("⏳ Pending")
                     with col4:
                         attempts = result.get('export_attempts', 0)
                         if attempts > 0:
@@ -1824,7 +1824,7 @@ def main():
                     st.session_state.batch_progress['current'] = current_cycle
                     
                     # Show current cycle status
-                    with st.spinner(f"ðŸ”„ Running batch cycle {current_cycle}/{total_cycles}..."):
+                    with st.spinner(f"🔄 Running batch cycle {current_cycle}/{total_cycles}..."):
                         
                         # Create collector
                         exporter = GoogleSheetsExporter(sheets_creds) if sheets_creds else None
@@ -1896,11 +1896,11 @@ def main():
                         export_status = cycle_result['export_status']
                         
                         if export_status == 'success':
-                            st.success(f"âœ… Cycle {current_cycle}/{total_cycles} completed: {videos_found} videos collected and exported")
+                            st.success(f"✅ Cycle {current_cycle}/{total_cycles} completed: {videos_found} videos collected and exported")
                         elif export_status == 'skipped':
-                            st.info(f"â„¹ï¸ Cycle {current_cycle}/{total_cycles} completed: {videos_found} videos collected (export skipped)")
+                            st.info(f"ℹ️ Cycle {current_cycle}/{total_cycles} completed: {videos_found} videos collected (export skipped)")
                         elif export_status == 'no_videos':
-                            st.warning(f"âš ï¸ Cycle {current_cycle}/{total_cycles} completed: No videos found")
+                            st.warning(f"⚠️ Cycle {current_cycle}/{total_cycles} completed: No videos found")
                         
                         # Continue to next cycle after short delay
                         if st.session_state.batch_current_cycle < st.session_state.batch_total_cycles:
@@ -2098,11 +2098,11 @@ def main():
                                         
                                         st.session_state.rater_stats['moved_to_tobe'] += 1
                                         
-                                        st.success(f"âœ… Score: {score:.1f}/10 - Moved to tobe_links!")
+                                        st.success(f"✅ Score: {score:.1f}/10 - Moved to tobe_links!")
                                         
                                         rater.add_log(f"Video {next_video.get('title', '')[:50]} scored {score:.1f} - moved to tobe_links and time_comments", "SUCCESS")
                                     else:
-                                        st.info(f"â„¹ï¸ Score: {score:.1f}/10 - Below threshold, removed from raw_links.")
+                                        st.info(f"ℹ️ Score: {score:.1f}/10 - Below threshold, removed from raw_links.")
                                         rater.add_log(f"Video {next_video.get('title', '')[:50]} scored {score:.1f} - removed", "INFO")
                                     
                                     # Log the discarded action
