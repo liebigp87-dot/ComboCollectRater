@@ -1822,40 +1822,47 @@ def main():
                             require_captions=settings.get('require_captions', True)
                         )
                         
-                        # Export immediately if enabled and videos found
-                        if (settings.get('auto_export', False) and 
-                            cycle_result['videos'] and 
-                            len(cycle_result['videos']) > 0 and
-                            sheets_creds and
-                            settings.get('spreadsheet_id')):
-                            
-                            cycle_result['export_status'] = 'exporting'
-                            
-                            export_success, export_error, export_attempts = collector.export_with_retry(
-                                cycle_result['videos'],
-                                settings['spreadsheet_id']
+                        # FORCE EXPORT AFTER EACH CYCLE IF AUTO-EXPORT ENABLED
+                        cycle_result['export_status'] = 'pending'
+                        
+                        if cycle_result['videos'] and len(cycle_result['videos']) > 0:
+                            # Check if we should export
+                            should_export = (
+                                settings.get('auto_export', False) and 
+                                exporter is not None and 
+                                settings.get('spreadsheet_id')
                             )
                             
-                            cycle_result['export_attempts'] = export_attempts
-                            
-                            if export_success:
-                                cycle_result['export_status'] = 'success'
-                                cycle_result['export_completed_at'] = datetime.now().isoformat()
-                                collector.add_log(f"Cycle {current_cycle} exported successfully", "SUCCESS")
-                            else:
-                                cycle_result['export_status'] = 'failed'
-                                cycle_result['export_error'] = export_error
-                                collector.add_log(f"Cycle {current_cycle} export failed: {export_error}", "ERROR")
+                            if should_export:
+                                cycle_result['export_status'] = 'exporting'
+                                collector.add_log(f"Starting export for cycle {current_cycle}: {len(cycle_result['videos'])} videos", "INFO")
                                 
-                                # Stop batch on export failure
-                                st.session_state.batch_progress['results'].append(cycle_result)
-                                set_status('error', f"BATCH ABORTED at cycle {current_cycle}: Export failed after {export_attempts} attempts")
-                                st.session_state.is_batch_collecting = False
-                                st.rerun()
-                        
-                        elif cycle_result['videos'] and len(cycle_result['videos']) > 0:
-                            cycle_result['export_status'] = 'skipped'
-                            collector.add_log(f"Cycle {current_cycle}: Export skipped (auto-export disabled)", "INFO")
+                                try:
+                                    # Direct export using exporter
+                                    sheet_url = exporter.export_to_sheets(
+                                        cycle_result['videos'], 
+                                        spreadsheet_id=settings['spreadsheet_id']
+                                    )
+                                    
+                                    if sheet_url:
+                                        cycle_result['export_status'] = 'success'
+                                        cycle_result['export_completed_at'] = datetime.now().isoformat()
+                                        cycle_result['export_attempts'] = 1
+                                        collector.add_log(f"Cycle {current_cycle} exported successfully to raw_links", "SUCCESS")
+                                    else:
+                                        cycle_result['export_status'] = 'failed'
+                                        cycle_result['export_error'] = "Export returned no URL"
+                                        cycle_result['export_attempts'] = 1
+                                        collector.add_log(f"Cycle {current_cycle} export failed: No URL returned", "ERROR")
+                                
+                                except Exception as export_error:
+                                    cycle_result['export_status'] = 'failed'
+                                    cycle_result['export_error'] = str(export_error)
+                                    cycle_result['export_attempts'] = 1
+                                    collector.add_log(f"Cycle {current_cycle} export failed: {str(export_error)}", "ERROR")
+                            else:
+                                cycle_result['export_status'] = 'skipped'
+                                collector.add_log(f"Cycle {current_cycle}: Export skipped (auto-export: {settings.get('auto_export', False)}, exporter: {exporter is not None})", "INFO")
                         else:
                             cycle_result['export_status'] = 'no_videos'
                             collector.add_log(f"Cycle {current_cycle}: No videos to export", "INFO")
